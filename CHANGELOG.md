@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.24#18.1-e4 (2026-11-26)
+
+基线：`89d03f2`（tag `v0.24#17.8-e3`）。发布说明见 [docs/releases/v0.24-18.1-e4.md](docs/releases/v0.24-18.1-e4.md)。
+
+### Added
+- **AAP 直连路线**：不经过 gearhead，直接实现 AAP 客户端。支持 USB accessory、
+  无线（蓝牙 RFCOMM → WPP → 车机热点 → TCP）与 debug 构建下的 TCP/localabstract 调试。
+  主界面新增「投屏路线」卡片，可随时切换并显示实时连接状态。
+- **Route B 显示接管**：AAP 路线由模块 App 创建虚拟屏，system_server 通过
+  `ICoreManager.onExternalDisplayAttached` 接管任务托管、输入注入、镜像与手机端悬浮窗。
+- 新增 `AapRoute`（默认 `legacy`）、`AapEnabled`、`AapTcpPort` 配置项。
+- `NOTICE-AAP.md`：声明 AARE / aasdk / lagXkjy 的代码来源、提交与改动。
+
+### Changed
+- 版本号：
+  - `versionName`: `0.24#18.1-e4`
+  - `versionCode`: `3018`
+- 设置页移除 AAP 分类，路线选择与启停移到主界面；主界面顺序调整为
+  状态 → 投屏路线 → 常用设置 → 设备信息。
+- 车机服务器入口移到高级设置，改用 signature 级权限广播。
+
+### Fixed
+- **Android Auto 18.1**：`LayoutInfo` 构造器新增参数导致 hooks 全部失效；
+  改为形状无关匹配，兼容 17.8 / 18.1。
+- 协程未捕获异常可能打死 system_server；建屏/销毁增加超时、看门狗与客户端死亡兜底。
+- 旧会话的 60s 销毁倒计时会拆掉之后建立的新会话。
+- 悬浮球在某些路线下被按车机 170dpi inflate，尺寸缩到 59px；改用默认屏密度后恢复。
+- 重连时重复 bind TCP/localabstract 监听导致 `EADDRINUSE`；改为常驻 accept 循环。
+- 投屏收尾可能 force-stop gearhead；已加入保护名单。
+- `IVirtualDisplayCreatedListener.onAvailableDisplay` 改为 `oneway`，消除
+  system_server 的 FLAG_ONEWAY 警告与跨进程回调阻塞。
+
 ## v0.24#17.2-e2 (2026-09-02)
 
 基线：`4a9746b`（tag `v0.24.0`，`0.24#17.2-e1` / `3012`）。详见 [docs/releases/v0.24-17.2-e2.md](docs/releases/v0.24-17.2-e2.md)。

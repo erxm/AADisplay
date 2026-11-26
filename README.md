@@ -11,6 +11,34 @@
 本仓库是 [Nitsuya/AADisplay](https://github.com/Nitsuya/AADisplay) 的 fork，
 面向 Android Auto 17.x 兼容性、TaskView 生命周期稳定性和投屏尺寸的正确性。
 
+## 投屏路线（新）
+
+主界面的「投屏路线」卡片可直接切换（设置页不再放路线项）：
+
+- **原版路线（默认）**：hook `com.google.android.projection.gearhead`，需要安装 Android Auto。
+- **AAP 直连**：基于 [AARE](https://github.com/prototux/AARE) 的开源 AAP 协议栈，
+  不依赖 Android Auto / gearhead；支持 USB accessory、无线（蓝牙 + 车机热点）以及
+  debug 构建下的本地 TCP/localabstract 调试（配合 DHU）。
+
+AAP 路线的思路与无线实现主要来自 [lagXkjy/AADisplay](https://github.com/lagXkjy/AADisplay)：
+蓝牙 ACL → WPP → 加入车机热点 → TCP AAP。**大多数情况下 lagXkjy 的分支功能更完整、
+适用性更广**；本仓库只做了与「原版路线共存」所需的最小裁剪。
+
+在 AAP 路线下，虚拟屏由模块 App 创建（Route B），system_server 仅负责任务托管、
+输入注入、镜像与手机端悬浮窗；原版路线的建屏 / 销毁路径保持不变。
+
+### 第三方代码与许可
+
+本分支引用的全部第三方代码、版本提交与改动清单见 **[NOTICE-AAP.md](NOTICE-AAP.md)**，主要包括：
+
+- [lagXkjy/AADisplay](https://github.com/lagXkjy/AADisplay) @ `1886f69`：AAP 直连思路与无线连接实现
+  （蓝牙 ACL → WPP → 车机热点 → TCP AAP）的主要来源，本项目受其启发并做裁剪；
+- [prototux/AARE](https://github.com/prototux/AARE)（`aap` 模块，GPL-3.0-or-later，
+  pinned `main@5ac79ba`，vendored 于 [`vendor/aare-aap`](vendor/aare-aap)）；
+- [opencardev/aasdk](https://github.com/opencardev/aasdk)（AAP protobuf 定义，GPL-3.0-or-later）。
+
+本仓库整体按根目录 [LICENSE](LICENSE)（GPL-3.0）分发。
+
 ## 功能
 
 - 任意应用投到车机屏幕，按车机实际分辨率铺满，无硬编码分辨率表。
