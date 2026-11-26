@@ -51,6 +51,15 @@ class SettingsActivity : BaseActivity<ActivitySettingsBinding>(ActivitySettingsB
             setPreferencesFromResource(R.xml.pref_aadisplay_config, rootKey)
             bindAppProjectionSwitches()
             bindHeadUnitServerActions()
+            // ListPreference 自带的单选对话框在本 ROM 上列表项点不动。
+            // 选项移到独立的 ChoiceActivity 页面。
+            bindChoicePages()
+            findPreference<Preference>("AapCertManage")?.setOnPreferenceClickListener {
+                startActivity(
+                    android.content.Intent(requireContext(), io.github.nitsuya.aa.display.aap.AapCertActivity::class.java)
+                )
+                true
+            }
         }
 
         /**
@@ -148,6 +157,7 @@ class SettingsActivity : BaseActivity<ActivitySettingsBinding>(ActivitySettingsB
         override fun onResume() {
             super.onResume()
             preferenceManager.sharedPreferences?.registerOnSharedPreferenceChangeListener(this)
+            refreshChoiceSummaries()
         }
 
         override fun onPause() {
@@ -157,6 +167,66 @@ class SettingsActivity : BaseActivity<ActivitySettingsBinding>(ActivitySettingsB
 
         override fun onSharedPreferenceChanged(sp: SharedPreferences?, key: String?) {
             SharedPreferencesAccess.makeReadableForHooks(requireContext(), AADisplayConfig.ConfigName)
+        }
+
+        private data class ChoiceSpec(
+            val key: String,
+            val entriesRes: Int,
+            val valuesRes: Int,
+            val default: String,
+        )
+
+        private val choiceSpecs = listOf(
+            ChoiceSpec(
+                "DisplayImePolicy", R.array.ime_policy_keys, R.array.ime_policy_values, "1",
+            ),
+            ChoiceSpec(
+                "AapVideoCodec", R.array.aap_video_codec_keys, R.array.aap_video_codec_values, "h264",
+            ),
+            ChoiceSpec(
+                "AapMaxResolution",
+                R.array.aap_max_resolution_keys,
+                R.array.aap_max_resolution_values,
+                "auto",
+            ),
+        )
+
+        private fun bindChoicePages() {
+            // 本 ROM 上 ListPreference/AlertDialog 的单选列表点不动（对话框能弹出、
+            // 外部点击能取消，但条目没有点击响应）。选项改由 [ChoiceActivity] 承载。
+            choiceSpecs.forEach { spec ->
+                val pref = findPreference<Preference>(spec.key) ?: return@forEach
+                updateChoiceSummary(pref, spec)
+                pref.setOnPreferenceClickListener {
+                    val entries = resources.getStringArray(spec.entriesRes)
+                    val values = resources.getStringArray(spec.valuesRes)
+                    startActivity(
+                        android.content.Intent(requireContext(), ChoiceActivity::class.java)
+                            .putExtra(ChoiceActivity.EXTRA_KEY, spec.key)
+                            .putExtra(ChoiceActivity.EXTRA_TITLE, pref.title)
+                            .putStringArrayListExtra(ChoiceActivity.EXTRA_ENTRIES, ArrayList(entries.toList()))
+                            .putStringArrayListExtra(ChoiceActivity.EXTRA_VALUES, ArrayList(values.toList()))
+                            .putExtra(ChoiceActivity.EXTRA_DEFAULT, spec.default)
+                    )
+                    true
+                }
+            }
+        }
+
+        private fun refreshChoiceSummaries() {
+            choiceSpecs.forEach { spec ->
+                val pref = findPreference<Preference>(spec.key) ?: return@forEach
+                updateChoiceSummary(pref, spec)
+            }
+        }
+
+        private fun updateChoiceSummary(pref: Preference, spec: ChoiceSpec) {
+            val entries = resources.getStringArray(spec.entriesRes)
+            val values = resources.getStringArray(spec.valuesRes)
+            val current = preferenceManager.sharedPreferences
+                ?.getString(spec.key, spec.default) ?: spec.default
+            val index = values.indexOf(current).takeIf { it >= 0 } ?: 0
+            pref.summary = entries.getOrNull(index)
         }
     }
 }

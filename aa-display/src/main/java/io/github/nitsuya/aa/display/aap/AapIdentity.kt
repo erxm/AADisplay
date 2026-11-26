@@ -117,6 +117,30 @@ object AapIdentity {
     }
 
     /**
+     * 从本机已安装的 Android Auto 重新抽取证书，并按 gearhead 的 versionCode 打标签。
+     * 与 [loadOrCreate] 的自动路径一致：之后 AA 升级会再次自动重抽。
+     * 供设置页「从已安装的 Android Auto 重新提取」使用。
+     */
+    fun extractFromInstalledGearhead(context: Context): PhoneIdentity {
+        val paths = gearheadApkPaths(context)
+            ?: throw IllegalStateException("未安装 Android Auto")
+        val version = gearheadVersionCode(context)
+        val result = AaApkKeyExtractor.extractFromApkPaths(paths)
+        val key = parsePrivateKeyPem(result.privateKeyPem)
+            ?: throw IllegalStateException("抽取成功但私钥无法解析")
+        val dir = dir(context)
+        persist(
+            File(dir, AapConsts.CERT_FILE), File(dir, AapConsts.KEY_FILE),
+            File(dir, SOURCE_FILE), result.certificate, key, carserviceTag(version),
+        )
+        Log.i(
+            TAG,
+            "已从 gearhead 重新抽取 CarService 证书（${result.sourceLabel}，modulus=${result.modulusFingerprint}）",
+        )
+        return PhoneIdentity(result.certificate, key)
+    }
+
+    /**
      * 从给定 APK/APKM/DEX 文件抽取 CarService 证书并落盘（source=carservice-manual:<label>）。
      * 供设置页“从 APK 文件提取”与调试入口（adb 传 apk_path）使用。
      */
@@ -432,9 +456,16 @@ object AapIdentity {
                         Log.i(TAG, "已从 gearhead 抽取 CarService 证书（${result.sourceLabel}，modulus=${result.modulusFingerprint}）")
                         return PhoneIdentity(result.certificate, key)
                     }
-                    Log.w(TAG, "CarService 证书已抽取但私钥解析失败，回退自签")
+                    Log.w(TAG, "CarService 证书已抽取但私钥解析失败")
                 }
-                .onFailure { Log.w(TAG, "从 gearhead 抽取 CarService 证书失败，回退自签", it) }
+                .onFailure { Log.w(TAG, "从 gearhead 抽取 CarService 证书失败", it) }
+            // AA 升级后抽取失败（例如新版把 key blob 挪了位置）时，绝不能立刻用自签证书
+            // 覆盖仍然可用的旧证书——那会让原本能连的车机直接拒签。保留旧身份并保持旧
+            // source tag，这样下一次会话仍会继续尝试从新版 AA 重抽。
+            if (cached != null) {
+                Log.w(TAG, "抽取失败，沿用已存身份（source=${cachedSource ?: "unknown"}）")
+                return cached
+            }
         }
 
         val generated = SelfSignedCertificate.generate("AADisplay local")

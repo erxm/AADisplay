@@ -37,6 +37,8 @@
     <!-- 投屏期间持 SCREEN_BRIGHT_WAKE_LOCK，避免超时息屏触发 keyguard sleep token 把虚拟屏睡掉 -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- AAP 连接属于 connectedDevice；dataSync 仅作为缺少蓝牙/USB 授权时的兜底 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 无线 AAP：蓝牙发现车机 + 加入车机 Wi-Fi（App 私有 local-only 网络） -->
@@ -130,7 +132,16 @@
             android:name=".aap.AapEgressService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="connectedDevice|dataSync" />
+        <activity
+            android:name=".ui.setting.ChoiceActivity"
+            android:exported="false"
+            android:label="@string/more_settings_title" />
+        <activity
+            android:name=".aap.AapCertActivity"
+            android:exported="false"
+            android:label="@string/aap_cert_title"
+            android:windowSoftInputMode="adjustResize|stateHidden" />
         <!-- USB accessory 插入回调：申请授权后拉起 AAP 前台服务（无界面透明主题） -->
         <activity
             android:name=".aap.AapUsbAttachActivity"

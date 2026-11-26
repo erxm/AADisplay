@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:clipToPadding="false"
+    android:fillViewport="true"
+    android:scrollbars="none">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="16dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="28dp">
+
+        <com.google.android.material.textview.MaterialTextView
+            style="@style/Miuix.GroupTitle"
+            android:text="@string/aap_cert_title" />
+
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Miuix.Card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/tv_cert_status"
+                style="@style/Miuix.ItemSummary"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingHorizontal="18dp"
+                android:paddingVertical="16dp"
+                android:textIsSelectable="true"
+                android:fontFamily="monospace"
+                android:textSize="12sp"
+                tools:text="来源：carservice:3017\n主体：CN=CarService\n有效期至：2027-01-01 00:00\n密钥：2048 bit（有）\n公钥指纹：abcdef0123456789" />
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_extract_installed"
+            style="@style/Miuix.Button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="@string/aap_cert_extract_installed" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_extract_apk"
+            style="@style/Miuix.Button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="@string/aap_cert_extract_apk" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_import_pem"
+            style="@style/Miuix.Button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="@string/aap_cert_import_pem" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_download"
+            style="@style/Miuix.Button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="@string/aap_cert_download" />
+
+        <!-- 用普通 EditText：Miuix 的 TextInputLayout 样式带 ExposedDropdownMenu，
+             内部必须是 AutoCompleteTextView，否则 inflate 直接抛异常。 -->
+        <EditText
+            android:id="@+id/et_profile_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:hint="@string/aap_cert_profile_label"
+            android:imeOptions="actionDone"
+            android:inputType="text"
+            android:maxLines="1"
+            android:singleLine="true" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_save_profile"
+            style="@style/Miuix.Button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="@string/aap_cert_save_profile" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_unpin"
+            style="@style/Miuix.Button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="@string/aap_cert_unpin" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_export"
+            style="@style/Miuix.Button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="@string/aap_cert_export" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_delete"
+            style="@style/Miuix.Button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="@string/aap_cert_delete" />
+
+        <com.google.android.material.textview.MaterialTextView
+            style="@style/Miuix.GroupTitle"
+            android:text="@string/aap_cert_vault_title" />
+
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/tv_profiles_empty"
+            style="@style/Miuix.ItemSummary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/aap_cert_vault_empty" />
+
+        <LinearLayout
+            android:id="@+id/ll_profiles"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
+        <com.google.android.material.textview.MaterialTextView
+            style="@style/Miuix.ItemSummary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="@string/aap_cert_hint" />
+    </LinearLayout>
+</ScrollView>

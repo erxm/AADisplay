@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.media.MediaCodecList
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -20,10 +21,13 @@ import aap_protobuf.service.inputsource.message.KeyEventOuterClass.KeyEvent as A
 import aap_protobuf.service.inputsource.message.PointerActionOuterClass.PointerAction
 import aap_protobuf.service.inputsource.message.RelativeEventOuterClass.RelativeEvent
 import aap_protobuf.service.inputsource.message.TouchEventOuterClass.TouchEvent
+import aap_protobuf.service.media.shared.message.MediaCodecTypeOuterClass.MediaCodecType
 import aap_protobuf.service.media.sink.message.VideoCodecResolutionTypeOuterClass.VideoCodecResolutionType
 import aap_protobuf.service.media.sink.message.VideoConfigurationOuterClass.VideoConfiguration
 import aap_protobuf.service.media.sink.message.VideoFrameRateTypeOuterClass.VideoFrameRateType
 import io.github.nitsuya.aa.display.CoreApi
+import io.github.nitsuya.aa.display.util.AADisplayConfig
+import io.github.nitsuya.aa.display.util.SharedPreferencesAccess
 import io.github.nitsuya.aa.display.xposed.IVirtualDisplayCreatedListener
 import net.prototux.aare.aap.AapLog
 import net.prototux.aare.aap.AapSession
@@ -349,18 +353,114 @@ object AapEgress {
         transport = null
     }
 
-    /** 从车机通告的服务里挑出我们要开的通道：目前只有视频与输入。 */
+    /** 车机当前会话通告的视频编码（buildChannels 选中后固定）。 */
+    @Volatile
+    private var videoCodecType: MediaCodecType = MediaCodecType.MEDIA_CODEC_VIDEO_H264_BP
+
+    /**
+     * 非 H.264 编码器启动失败后置位：下一次重连强制 H.264，避免反复重建会话。
+     * 用户在界面重新发起连接时由 [resetCodecFallback] 清掉。
+     */
+    @Volatile
+    private var forceH264Fallback = false
+
+    fun resetCodecFallback() {
+        forceH264Fallback = false
+    }
+
+    /** 用户配置的编码器偏好；车机没宣告或手机无编码器时回退 H.264。 */
+    private fun preferredVideoCodec(): String {
+        if (forceH264Fallback) return "h264"
+        return runCatching {
+            AADisplayConfig.AapVideoCodec.get(
+                appContext?.let { SharedPreferencesAccess.openForHooks(it, AADisplayConfig.ConfigName) },
+            )
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: "h264"
+    }
+
+    /** 用户配置的最大分辨率（像素数）；auto/空 = 跟随车机首选。 */
+    private fun maxResolutionPixels(): Int? {
+        val value = runCatching {
+            AADisplayConfig.AapMaxResolution.get(
+                appContext?.let { SharedPreferencesAccess.openForHooks(it, AADisplayConfig.ConfigName) },
+            )
+        }.getOrNull()?.trim()?.lowercase() ?: return null
+        val parts = value.split("x")
+        if (parts.size != 2) return null
+        val w = parts[0].toIntOrNull() ?: return null
+        val h = parts[1].toIntOrNull() ?: return null
+        return if (w > 0 && h > 0) w * h else null
+    }
+
+    private fun hasEncoderFor(type: MediaCodecType): Boolean {
+        val mime = mimeFor(type)
+        return runCatching {
+            MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.any { info ->
+                info.isEncoder && info.supportedTypes.any { it.equals(mime, ignoreCase = true) }
+            }
+        }.getOrDefault(false)
+    }
+
+    private fun mimeFor(type: MediaCodecType): String = when (type) {
+        MediaCodecType.MEDIA_CODEC_VIDEO_H265 -> "video/hevc"
+        MediaCodecType.MEDIA_CODEC_VIDEO_VP9 -> "video/x-vnd.on2.vp9"
+        MediaCodecType.MEDIA_CODEC_VIDEO_AV1 -> "video/av01"
+        else -> "video/avc"
+    }
+
+    /**
+     * 从车机通告的服务里挑出视频与输入通道。
+     *
+     * 车机按编码各宣告一个 media sink；这里按用户偏好选一个，未宣告或本机无编码器时
+     * 回退 H.264。只开一个视频通道，避免同一会话里重复 SETUP。
+     */
     private fun buildChannels(response: ServiceDiscoveryResponse): List<ServiceChannel> {
         val channels = mutableListOf<ServiceChannel>()
-        for (service in response.channelsList) {
-            if (!service.hasMediaSinkService()) continue
-            val sink = service.mediaSinkService
-            if (sink.videoConfigsCount > 0) {
-                val ch = VideoChannel(service, VideoListener)
-                videoChannel = ch
-                channels += ch
-                Log.i(TAG, "车机视频配置：${sink.videoConfigsList.map { describe(it) }}")
+        val sinks = response.channelsList.filter {
+            it.hasMediaSinkService() && it.mediaSinkService.videoConfigsCount > 0
+        }
+        if (sinks.isNotEmpty()) {
+            // available_type 缺省是 AUDIO_PCM；视频服务没填时按 H.264 处理，
+            // 避免把音频 codec 当成视频 SETUP 出去。
+            val byCodec = sinks.groupBy { service ->
+                val type = service.mediaSinkService.availableType
+                if (type == MediaCodecType.MEDIA_CODEC_VIDEO_H264_BP ||
+                    type == MediaCodecType.MEDIA_CODEC_VIDEO_H265 ||
+                    type == MediaCodecType.MEDIA_CODEC_VIDEO_VP9 ||
+                    type == MediaCodecType.MEDIA_CODEC_VIDEO_AV1
+                ) {
+                    type
+                } else {
+                    MediaCodecType.MEDIA_CODEC_VIDEO_H264_BP
+                }
             }
+            val pref = preferredVideoCodec()
+            val order = when (pref) {
+                "h265" -> listOf(MediaCodecType.MEDIA_CODEC_VIDEO_H265, MediaCodecType.MEDIA_CODEC_VIDEO_H264_BP)
+                "vp9" -> listOf(MediaCodecType.MEDIA_CODEC_VIDEO_VP9, MediaCodecType.MEDIA_CODEC_VIDEO_H264_BP)
+                "av1" -> listOf(MediaCodecType.MEDIA_CODEC_VIDEO_AV1, MediaCodecType.MEDIA_CODEC_VIDEO_H264_BP)
+                "auto" -> listOf(
+                    MediaCodecType.MEDIA_CODEC_VIDEO_H264_BP,
+                    MediaCodecType.MEDIA_CODEC_VIDEO_H265,
+                    MediaCodecType.MEDIA_CODEC_VIDEO_VP9,
+                    MediaCodecType.MEDIA_CODEC_VIDEO_AV1,
+                )
+                else -> listOf(MediaCodecType.MEDIA_CODEC_VIDEO_H264_BP)
+            }
+            val chosen = order.firstOrNull { byCodec.containsKey(it) && hasEncoderFor(it) }
+                ?: byCodec.keys.firstOrNull { hasEncoderFor(it) }
+                ?: byCodec.keys.first()
+            val service = byCodec.getValue(chosen).first()
+            val sink = service.mediaSinkService
+            videoCodecType = chosen
+            val ch = VideoChannel(service, VideoListener, chosen)
+            videoChannel = ch
+            channels += ch
+            Log.i(
+                TAG,
+                "车机视频编码：$chosen（偏好=$pref，可用=${byCodec.keys.joinToString()}）" +
+                    " 配置=${sink.videoConfigsList.map { describe(it) }}",
+            )
         }
         for (service in response.channelsList) {
             if (!service.hasInputSourceService()) continue
@@ -374,8 +474,20 @@ object AapEgress {
         "${resolution(config).first}x${resolution(config).second}@${fpsOf(config)} dpi=${config.density}"
 
     private object VideoListener : VideoChannel.Listener {
-        override fun chooseConfiguration(configs: List<VideoConfiguration>, preferred: List<Int>): Int =
-            preferred.firstOrNull { it in configs.indices } ?: 0
+        override fun chooseConfiguration(configs: List<VideoConfiguration>, preferred: List<Int>): Int {
+            val maxPixels = AapEgress.maxResolutionPixels()
+            val allowed = if (maxPixels == null) {
+                configs.indices.toList()
+            } else {
+                configs.indices.filter { AapEgress.resolution(configs[it]).let { (w, h) -> w * h <= maxPixels } }
+            }
+            val pick = preferred.firstOrNull { it in allowed }
+                ?: allowed.maxByOrNull { AapEgress.resolution(configs[it]).let { (w, h) -> w * h } }
+                ?: preferred.firstOrNull { it in configs.indices }
+                ?: 0
+            Log.i(TAG, "选择视频配置 #$pick（最大分辨率=${maxPixels ?: "车机首选"}）")
+            return pick
+        }
 
         override fun onVideoStart(index: Int, config: VideoConfiguration) {
             Log.i(TAG, "车机选择视频配置 #$index: ${describe(config)}")
@@ -558,6 +670,20 @@ object AapEgress {
     }
 
     /**
+     * 非 H.264 编码不可用时，标记并断开当前会话；服务会自动用 H.264 重连。
+     * 只回退一次，避免在“车机宣告了 H.265 但本机编不出来”时无限重连。
+     */
+    private fun fallbackToH264(reason: String) {
+        if (videoCodecType == MediaCodecType.MEDIA_CODEC_VIDEO_H264_BP || forceH264Fallback) return
+        forceH264Fallback = true
+        Log.w(TAG, "$reason：$videoCodecType 不可用，自动回退 H.264 并重连")
+        Thread({
+            runCatching { session?.stop() }
+            runCatching { transport?.close() }
+        }, "aap-codec-fallback").start()
+    }
+
+    /**
      * 路线 B：本进程 createVirtualDisplay（flags PUBLIC|OWN_CONTENT_ONLY，GlVdTest 实测组合），
      * 输出面接 GL 消费者 → 编码器，再把 displayId 交给 system_server 做任务托管/输入注入/镜像。
      */
@@ -585,6 +711,7 @@ object AapEgress {
             height = height,
             fps = fps,
             bitrate = bitrate,
+            mime = mimeFor(videoCodecType),
             onCodecConfig = { data -> channel.sendCodecConfig(data, 0, data.size) },
             onFrame = { buf, offset, length, ptsUs, key ->
                 channel.sendFrame(buf, offset, length, ptsUs, key) { }
@@ -593,8 +720,10 @@ object AapEgress {
         encoder = enc
         runCatching { enc.start() }
             .onFailure {
-                Log.e(TAG, "启动编码器失败", it)
+                Log.e(TAG, "启动编码器失败（${mimeFor(videoCodecType)}）", it)
                 encoder = null
+                // 非 H.264 编码器在本机不可用：标记后断开，让服务用 H.264 重连。
+                fallbackToH264("编码器启动失败")
                 return
             }
         val gl = AapGlVideoConsumer(width, height, enc.inputSurface)

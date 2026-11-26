@@ -8,7 +8,7 @@ import android.view.Surface
 import java.nio.ByteBuffer
 
 /**
- * Surface → H.264 编码器。
+ * Surface → H.264 / H.265 / VP9 / AV1 编码器。
  *
  * 输入面直接交给 system_server 里的虚拟屏渲染（[io.github.nitsuya.aa.display.xposed.CoreApi.onCreateDisplay]
  * 的 surface 参数），所以这里不需要 MediaProjection，也不需要再抓一次屏。
@@ -21,6 +21,7 @@ class AapVideoEncoder(
     private val height: Int,
     private val fps: Int,
     private val bitrate: Int,
+    private val mime: String = MediaFormat.MIMETYPE_VIDEO_AVC,
     private val onCodecConfig: (ByteArray) -> Unit,
     private val onFrame: (buf: ByteArray, offset: Int, length: Int, ptsUs: Long, key: Boolean) -> Unit,
 ) {
@@ -47,37 +48,71 @@ class AapVideoEncoder(
     lateinit var inputSurface: Surface
         private set
 
+    /** 单次 configure/start 的参数组合；失败后释放 codec 再换下一组。 */
+    private data class Attempt(val level31: Boolean, val cbr: Boolean)
+
     fun start() {
-        val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
-            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-            setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
-            setInteger(MediaFormat.KEY_FRAME_RATE, fps)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
-            // 车机解码器口味保守：Baseline + 不插入 B 帧，避免部分车机花屏。
-            setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
-            setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel31)
-            setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
-            setInteger("ts-schema", 0)
+        val isAvc = mime == MediaFormat.MIMETYPE_VIDEO_AVC
+        // H.264 优先 Baseline + Level 3.1（车机最保守的口味）；Level 3.1 在
+        // 高分辨率机型上可能 configure 失败，退到“不指定 level”（仍是 H.264），
+        // 再失败则去掉 CBR（部分软件编码器不支持固定码率）。
+        val attempts = if (isAvc) {
+            listOf(Attempt(level31 = true, cbr = true), Attempt(false, true), Attempt(false, false))
+        } else {
+            listOf(Attempt(false, true), Attempt(false, false))
         }
-        // [B1] configure/createInputSurface/start 中途抛异常时必须释放 codec，
-        // 否则每次重试泄漏一个 MediaCodec（息屏唤醒自愈反复重试会放大）。
-        val c = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-        try {
-            c.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            inputSurface = c.createInputSurface()
-            c.start()
-        } catch (t: Throwable) {
-            runCatching { if (::inputSurface.isInitialized) inputSurface.release() }
-            runCatching { c.release() }
-            throw t
+        var lastError: Throwable? = null
+        for ((i, attempt) in attempts.withIndex()) {
+            val c = runCatching { MediaCodec.createEncoderByType(mime) }.getOrElse {
+                // 找不到该编码器：换参数也没用，直接抛给上层回退。
+                throw it
+            }
+            try {
+                val format = MediaFormat.createVideoFormat(mime, width, height).apply {
+                    setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+                    setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
+                    setInteger(MediaFormat.KEY_FRAME_RATE, fps)
+                    setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+                    if (isAvc) {
+                        // Baseline 不插 B 帧，避免部分车机花屏。
+                        setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
+                        if (attempt.level31) {
+                            setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel31)
+                        }
+                    }
+                    if (attempt.cbr) {
+                        setInteger(
+                            MediaFormat.KEY_BITRATE_MODE,
+                            MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR,
+                        )
+                    }
+                    setInteger("ts-schema", 0)
+                }
+                c.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                inputSurface = c.createInputSurface()
+                c.start()
+                codec = c
+                running = true
+                thread = Thread(::drainLoop, "aap-video-encoder").apply {
+                    isDaemon = true
+                    start()
+                }
+                Log.i(
+                    TAG,
+                    "视频编码器启动 $mime ${width}x$height@$fps bitrate=$bitrate " +
+                        "(level31=${attempt.level31}, cbr=${attempt.cbr})",
+                )
+                return
+            } catch (t: Throwable) {
+                lastError = t
+                // [B1] configure/createInputSurface/start 中途抛异常时必须释放 codec，
+                // 否则每次重试泄漏一个 MediaCodec（息屏唤醒自愈反复重试会放大）。
+                runCatching { if (::inputSurface.isInitialized) inputSurface.release() }
+                runCatching { c.release() }
+                Log.w(TAG, "编码器尝试 #${i + 1} 失败（$mime level31=${attempt.level31}）：${t.message}")
+            }
         }
-        codec = c
-        running = true
-        thread = Thread(::drainLoop, "aap-video-encoder").apply {
-            isDaemon = true
-            start()
-        }
-        Log.i(TAG, "视频编码器启动 ${width}x$height@$fps bitrate=$bitrate")
+        throw lastError ?: IllegalStateException("no encoder attempt for $mime")
     }
 
     /** 已产出的帧数；息屏/唤醒后用来判断编码器是不是停了。 */

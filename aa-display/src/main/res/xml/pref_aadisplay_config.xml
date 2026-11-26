@@ -9,14 +9,11 @@
         app:iconSpaceReserved="false">
 
         <!-- 见 AaVirtualDisplayAdapter.onConnected / AADisplayConfig.DisplayImePolicy。
-             IntConfig 内部按 String 读写，所以 entryValues 用字符串。 -->
-        <ListPreference
+             选项由 SettingsActivity 的自绘按钮对话框提供（ListPreference 的单选列表
+             在本 ROM 上条目无点击响应）。 -->
+        <Preference
             app:key="DisplayImePolicy"
-            app:defaultValue="1"
             app:title="@string/pref_ime_policy_title"
-            app:entries="@array/ime_policy_keys"
-            app:entryValues="@array/ime_policy_values"
-            app:useSimpleSummaryProvider="true"
             app:iconSpaceReserved="false" />
 
         <rikka.material.preference.MaterialSwitchPreference
@@ -54,6 +51,39 @@
             app:title="@string/pref_android_auto_dpi_title"
             app:dialogMessage="@string/pref_android_auto_dpi_summary"
             app:useSimpleSummaryProvider="true"
+            app:iconSpaceReserved="false" />
+
+    </PreferenceCategory>
+
+    <!-- ============ AAP 视频 ============ -->
+    <PreferenceCategory
+        app:key="CategoryAapVideo"
+        app:title="@string/pref_category_aap_video"
+        app:iconSpaceReserved="false">
+
+        <Preference
+            app:key="AapVideoCodec"
+            app:title="@string/pref_aap_video_codec_title"
+            app:iconSpaceReserved="false" />
+
+        <Preference
+            app:key="AapMaxResolution"
+            app:title="@string/pref_aap_max_resolution_title"
+            app:iconSpaceReserved="false" />
+
+    </PreferenceCategory>
+
+    <!-- ============ AAP 证书 ============ -->
+    <PreferenceCategory
+        app:key="CategoryAapCert"
+        app:title="@string/pref_category_aap_cert"
+        app:iconSpaceReserved="false">
+
+        <Preference
+            app:key="AapCertManage"
+            app:persistent="false"
+            app:title="@string/pref_aap_cert_manage_title"
+            app:summary="@string/pref_aap_cert_manage_summary"
             app:iconSpaceReserved="false" />
 
     </PreferenceCategory>

@@ -32,6 +32,19 @@
 - `IVirtualDisplayCreatedListener.onAvailableDisplay` 改为 `oneway`，消除
   system_server 的 FLAG_ONEWAY 警告与跨进程回调阻塞。
 
+### 通用性
+- 证书从已安装的 AA APK 离线提取，按 gearhead `versionCode` 打标签；AA 升级后
+  下一次 AAP 会话自动重抽，抽取失败时保留旧证书，不用自签覆盖。
+- AAP 前台服务类型改为 `connectedDevice`，缺少蓝牙/USB 授权时退回 `dataSync`，
+  避免 Android 15+ 的 dataSync 每日时长限制。
+- AAP 视频设置：编码（H.264 Baseline/Level 3.1 优先、自动、H.265、VP9、AV1）
+  与最大分辨率；车机未宣告或本机不支持时回退 H.264，非 H.264 编码器启动失败
+  自动断开并以 H.264 重连。
+- 新增 AAP 证书管理界面：状态查看、从已安装 AA 重抽、APK/PEM 导入、
+  在线下载、密钥库保存/切换/删除、取消固定、导出与删除。
+- 本 ROM 上 `ListPreference` / `AlertDialog` 的列表项与按钮收不到点击：
+  编码 / 分辨率 / 键盘位置改为独立选项页，证书页改为页内控件 + 二次确认。
+
 ## v0.24#17.2-e2 (2026-09-02)
 
 基线：`4a9746b`（tag `v0.24.0`，`0.24#17.2-e1` / `3012`）。详见 [docs/releases/v0.24-17.2-e2.md](docs/releases/v0.24-17.2-e2.md)。

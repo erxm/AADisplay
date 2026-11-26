@@ -48,6 +48,8 @@ class AapEgressService : Service() {
                 Log.i(TAG, "当前路线为原版（依赖 Android Auto），AAP 通道不启动")
                 return
             }
+            // 用户主动发起连接时清掉上一次的 H.264 回退标记，重新按设置里的编码尝试。
+            AapEgress.resetCodecFallback()
             val intent = Intent(context, AapEgressService::class.java)
             runCatching { context.startForegroundService(intent) }
                 .onFailure { context.startService(intent) }
@@ -438,7 +440,18 @@ class AapEgressService : Service() {
             .setOngoing(true)
             .build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            // AAP 是连接车机的持续性会话，优先 connectedDevice（不受 Android 15 的
+            // dataSync 每日 6 小时限制）。缺少蓝牙/USB 授权时该系统类型会被拒绝，
+            // 再退回 dataSync，保证 USB 授权前也能先挂住前台服务。
+            try {
+                startForeground(
+                    NOTIFICATION_ID, notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+                )
+            } catch (e: SecurityException) {
+                Log.w(TAG, "connectedDevice FGS 不可用，退回 dataSync", e)
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            }
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }

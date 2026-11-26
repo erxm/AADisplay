@@ -68,6 +68,12 @@ sealed class AADisplayConfig<T>(val key: String) {
     object AapEnabled: BooleanConfig("AapEnabled", true)
     // TCP/localabstract 调试入口的监听端口（仅 debug 构建生效）。
     object AapTcpPort: IntConfig("AapTcpPort", 5277)
+    // AAP 视频编码：h264（默认，Baseline）/ h265 / vp9 / av1 / auto。
+    // 车机没有宣告所选编码、或手机没有对应编码器时，自动回退 H.264。
+    object AapVideoCodec: StringConfig("AapVideoCodec", "h264")
+    // AAP 最大分辨率：auto（跟随车机首选）/ 800x480 / 1280x720 / 1920x1080。
+    // 车机配置按“不超过该值的最大分辨率”挑选。
+    object AapMaxResolution: StringConfig("AapMaxResolution", "auto")
 
 
     abstract class StringConfig(key: String, private val defValue: String? = null): AADisplayConfig<String?>(key){
