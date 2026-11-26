@@ -87,7 +87,21 @@ Route B 的接口与接管流程（`ICoreManager.onExternalDisplayAttached`、
 
 ---
 
-## 4. 未使用的外部代码
+## 4. 运行时下载的证书数据（非代码）
 
-本分支没有使用 hudcast、iscle 或其他未声明许可来源的代码。
-`aauto.aar`、DexKit、libxposed 等既有依赖的来源与许可见各自上游仓库，本次未改动。
+| 项 | 内容 |
+|---|---|
+| 仓库 | https://github.com/iscle/android-auto-certificates |
+| 用途 | 「AAP 证书管理 → 从在线仓库下载」可选功能 |
+| 引入方式 | **不包含在本仓库**；仅在用户点击时通过 jsDelivr / raw.githubusercontent 拉取 `latest` 下的 `certificate.pem`、`private-key.pem`、`metadata.json` |
+| 校验 | X.509 解析、RSA CRT 私钥、证书/私钥模数匹配、签发者必须为 `Google Automotive Link` |
+
+该功能只是证书**数据**的下载入口（与 AARE 的 “Download certificate” 同源），没有复制其代码；
+证书材料的版权/分发条件归仓库作者与原始来源所有。不联网时可完全使用本机 AA 提取或本地导入。
+
+---
+
+## 5. 未使用的外部代码
+
+本分支没有使用 hudcast 或其他未声明许可来源的代码；iscle 仓库只作为上述可选的证书数据源，
+不包含任何代码。`aauto.aar`、DexKit、libxposed 等既有依赖的来源与许可见各自上游仓库，本次未改动。

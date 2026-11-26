@@ -11,7 +11,8 @@
 - **Route B 显示接管**：AAP 路线由模块 App 创建虚拟屏，system_server 通过
   `ICoreManager.onExternalDisplayAttached` 接管任务托管、输入注入、镜像与手机端悬浮窗。
 - 新增 `AapRoute`（默认 `legacy`）、`AapEnabled`、`AapTcpPort` 配置项。
-- `NOTICE-AAP.md`：声明 AARE / aasdk / lagXkjy 的代码来源、提交与改动。
+- `NOTICE-AAP.md`：声明 AARE / aasdk / lagXkjy 的代码来源、提交与改动，
+  以及可选的证书数据源 iscle/android-auto-certificates（仅运行时下载，不包含在仓库内）。
 
 ### Changed
 - 版本号：
@@ -23,7 +24,7 @@
 
 ### Fixed
 - **Android Auto 18.1**：`LayoutInfo` 构造器新增参数导致 hooks 全部失效；
-  改为形状无关匹配，兼容 17.8 / 18.1。
+  改为形状无关匹配，适配 18.1 的构造器。
 - 协程未捕获异常可能打死 system_server；建屏/销毁增加超时、看门狗与客户端死亡兜底。
 - 旧会话的 60s 销毁倒计时会拆掉之后建立的新会话。
 - 悬浮球在某些路线下被按车机 170dpi inflate，尺寸缩到 59px；改用默认屏密度后恢复。
