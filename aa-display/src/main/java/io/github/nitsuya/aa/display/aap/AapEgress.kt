@@ -392,6 +392,16 @@ object AapEgress {
         return if (w > 0 && h > 0) w * h else null
     }
 
+    /**
+     * 「投屏显示 → 虚拟屏 DPI」对 AAP 路线同样生效：
+     * >50 时覆盖车机下发的 density，0/留空则跟随车机。
+     */
+    private fun virtualDisplayDpiOverride(): Int? = runCatching {
+        AADisplayConfig.VirtualDisplayDpi.get(
+            appContext?.let { SharedPreferencesAccess.openForHooks(it, AADisplayConfig.ConfigName) },
+        )
+    }.getOrNull()?.takeIf { it > 50 }
+
     private fun hasEncoderFor(type: MediaCodecType): Boolean {
         val mime = mimeFor(type)
         return runCatching {
@@ -642,7 +652,10 @@ object AapEgress {
         videoWidth = width
         videoHeight = height
         val fps = fpsOf(config)
-        val dpi = if (config.density > 0) config.density.toInt() else AapConsts.FALLBACK_DPI
+        val carDpi = if (config.density > 0) config.density.toInt() else AapConsts.FALLBACK_DPI
+        // 与原版路线共用「虚拟屏 DPI」；0/留空时跟随车机（AAP 默认行为）。
+        val dpi = virtualDisplayDpiOverride() ?: carDpi
+        if (dpi != carDpi) Log.i(TAG, "虚拟屏 DPI 覆盖：车机=$carDpi → $dpi")
         // 约 0.1 bpp：800x480@30 约 1.2 Mbps，1280x720@30 约 2.8 Mbps，够车机小屏用。
         val bitrate = (width * height * fps / 10).coerceIn(1_000_000, 8_000_000)
 

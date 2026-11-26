@@ -88,10 +88,10 @@
     <string name="pref_force_right_angle_summary">去掉车机画面的圆角裁切</string>
     <string name="pref_close_launcher_dashboard_title">阻止 AA 分屏切换</string>
     <string name="pref_close_launcher_dashboard_summary">屏蔽 Android Auto 的仪表盘分屏布局</string>
-    <string name="pref_virtual_display_dpi_title">虚拟屏 DPI</string>
-    <string name="pref_virtual_display_dpi_summary">留空或 0 表示跟随车机</string>
-    <string name="pref_android_auto_dpi_title">Android Auto DPI</string>
-    <string name="pref_android_auto_dpi_summary">留空或 0 表示不修改</string>
+    <string name="pref_virtual_display_dpi_title">虚拟屏 DPI（通用）</string>
+    <string name="pref_virtual_display_dpi_summary">留空或 0：原版跟随手机、AAP 跟随车机；大于 50 时覆盖两条路线的虚拟屏密度</string>
+    <string name="pref_android_auto_dpi_title">Android Auto DPI（原版）</string>
+    <string name="pref_android_auto_dpi_summary">仅原版路线生效；留空或 0 表示不修改 AA 的显示密度</string>
 
     <string name="pref_suspend_eye_care_title">投屏时暂停护眼模式</string>
     <string name="pref_suspend_eye_care_summary">MIUI/HyperOS 的护眼模式会让车机画面发黄；投屏期间临时关闭，断开后恢复（手机自身也会暂时失去护眼效果）</string>
@@ -120,11 +120,10 @@
     <string name="aap_notification_text">正在与车机建立 AAP 连接，保持前台服务运行</string>
 
     <string name="pref_category_aap_route">投屏路线</string>
-    <string name="pref_category_aap_video">AAP 视频</string>
     <string name="pref_category_aap_cert">AAP 证书</string>
-    <string name="pref_aap_video_codec_title">视频编码</string>
+    <string name="pref_aap_video_codec_title">AAP 视频编码</string>
     <string name="pref_aap_video_codec_summary">H.264 优先 Baseline + Level 3.1；其它编码在车机未宣告或本机不支持时自动回退 H.264</string>
-    <string name="pref_aap_max_resolution_title">最大分辨率</string>
+    <string name="pref_aap_max_resolution_title">AAP 最大分辨率</string>
     <string name="pref_aap_max_resolution_summary">在车机提供的配置里挑选不超过该值的最大分辨率</string>
     <string name="pref_aap_cert_manage_title">证书管理</string>
     <string name="pref_aap_cert_manage_summary">查看当前身份、从已安装的 AA 重抽、导入/下载/切换证书</string>

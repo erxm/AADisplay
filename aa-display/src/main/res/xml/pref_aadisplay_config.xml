@@ -53,14 +53,7 @@
             app:useSimpleSummaryProvider="true"
             app:iconSpaceReserved="false" />
 
-    </PreferenceCategory>
-
-    <!-- ============ AAP 视频 ============ -->
-    <PreferenceCategory
-        app:key="CategoryAapVideo"
-        app:title="@string/pref_category_aap_video"
-        app:iconSpaceReserved="false">
-
+        <!-- AAP 路线的画面参数放到同一分组：编码/分辨率与上面的 DPI 一起调整。 -->
         <Preference
             app:key="AapVideoCodec"
             app:title="@string/pref_aap_video_codec_title"
