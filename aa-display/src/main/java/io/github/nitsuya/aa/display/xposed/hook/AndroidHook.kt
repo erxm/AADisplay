@@ -43,8 +43,11 @@ object AndroidHook : BaseHook() {
             parameterTypes[0] == Context::class.java
         }.hookAfter {
             activityManagerServiceConstructorHook.forEach { hook -> hook.unhook() }
-            CoreManagerService.systemContext = it.thisObject.getObjectAs("mUiContext")
-            log(tagName, "get systemUiContext")
+            // 任何异常都不能逃进 AMS 构造器，否则开机即 system_server 崩溃。
+            runCatching {
+                CoreManagerService.systemContext = it.thisObject.getObjectAs("mUiContext")
+                log(tagName, "get systemUiContext")
+            }.onFailure { e -> log(tagName, "init systemUiContext failed", e) }
         }.also {
             if (it.isEmpty())
                 log(tagName, "no constructor with parameterTypes[0] == Context found")
@@ -55,8 +58,10 @@ object AndroidHook : BaseHook() {
             name == "systemReady"
         }.hookAfter {
             activityManagerServiceSystemReadyHook?.unhook()
-            CoreManagerService.systemReady()
-            log(tagName, "system ready")
+            runCatching {
+                CoreManagerService.systemReady()
+                log(tagName, "system ready")
+            }.onFailure { e -> log(tagName, "systemReady failed", e) }
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {//10+
@@ -174,7 +179,9 @@ object AndroidHook : BaseHook() {
         }
     }
     object FuckAppUseApplicationContext {
-        private val appInitUseDisplay: HashMap<String, Int> = hashMapOf()
+        // bindApplication 与 startProcessAsync 都在 Binder 线程池里并发执行，必须用并发容器。
+        private val appInitUseDisplay: java.util.concurrent.ConcurrentHashMap<String, Int> =
+            java.util.concurrent.ConcurrentHashMap()
         private val activityTaskManagerService_startProcessAsync by lazy {
             if(!IsSystemEnv) return@lazy null
             try{
@@ -220,8 +227,9 @@ object AndroidHook : BaseHook() {
             }
             applicationThread_bindApplication_hook = applicationThread_bindApplication?.hookBefore { param ->
                 try {
-                    val configuration = param.args[15]
-                    if(configuration !is Configuration){
+                    // 参数下标随 API 版本变化（Android 16 新增了 boolean），按类型找最稳。
+                    val configuration = param.args.firstOrNull { it is Configuration } as? Configuration
+                    if(configuration == null){
                         return@hookBefore
                     }
                     val packageName = (param.args[0] as String).run {

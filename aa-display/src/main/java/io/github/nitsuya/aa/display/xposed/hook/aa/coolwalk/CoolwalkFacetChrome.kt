@@ -266,7 +266,9 @@ object CoolwalkFacetChrome {
         val settle = Runnable {
             env.mReclaimFollowUps.remove(rail)
             if (!rail.isAttachedToWindow) return@Runnable
-            collapseThinRailChainAndExpandContent(env, rail)
+            // post 到 main looper 的 Runnable 抛异常 = 进程崩溃，必须兜住。
+            runCatching { collapseThinRailChainAndExpandContent(env, rail) }
+                .onFailure { logDebug(CoolwalkHookEnv.TAG, "settle(reclaim rail) failed: $it") }
         }
         env.mReclaimFollowUps[rail] = settle
         rail.post(settle)
@@ -276,7 +278,10 @@ object CoolwalkFacetChrome {
         env.mReclaimFollowUps.remove(root)?.let { root.removeCallbacks(it) }
         val settle = Runnable {
             env.mReclaimFollowUps.remove(root)
-            if (root.isAttachedToWindow) reclaimLeftGutter(env, root)
+            if (root.isAttachedToWindow) {
+                runCatching { reclaimLeftGutter(env, root) }
+                    .onFailure { logDebug(CoolwalkHookEnv.TAG, "settle(reclaim left) failed: $it") }
+            }
         }
         env.mReclaimFollowUps[root] = settle
         root.post(settle)
@@ -431,6 +436,12 @@ object CoolwalkFacetChrome {
         if (rail.id == View.NO_ID) {
             rail.id = View.generateViewId()
         }
+        // ConstraintSet.clone() 要求所有子 View 都有 id，否则直接抛
+        // "All children of ConstraintLayout must have ids"。必须先补齐再 clone。
+        for (i in 0 until parent.childCount) {
+            val c = parent.getChildAt(i) ?: continue
+            if (c.id == View.NO_ID) c.id = View.generateViewId()
+        }
         val set = ConstraintSet()
         set.clone(parent)
         set.setVisibility(rail.id, View.GONE)
@@ -438,7 +449,6 @@ object CoolwalkFacetChrome {
         for (i in 0 until parent.childCount) {
             val c = parent.getChildAt(i) ?: continue
             if (c === rail || c.visibility == View.GONE) continue
-            if (c.id == View.NO_ID) c.id = View.generateViewId()
             set.connect(c.id, ConstraintSet.START, ConstraintSet.PARENT_ID, ConstraintSet.START, 0)
             set.connect(c.id, ConstraintSet.END, ConstraintSet.PARENT_ID, ConstraintSet.END, 0)
             set.constrainWidth(c.id, ConstraintSet.MATCH_CONSTRAINT)

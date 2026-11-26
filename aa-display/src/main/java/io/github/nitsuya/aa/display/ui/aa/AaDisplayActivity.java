@@ -49,8 +49,10 @@ public class AaDisplayActivity extends CarActivity {
         super.onResume();
         Log.i(TAG, "onResume");
         try {
-            // Keep in sync with AABroadcastConst.ACTION_AA_DISPLAY_SHOWN
-            sendBroadcast(new android.content.Intent("aa.display.action.AA_DISPLAY_SHOWN"));
+            // Keep in sync with AABroadcastConst.ACTION_AA_DISPLAY_SHOWN.
+            // 显式指定 gearhead 包：接收方在 gearhead 进程里动态注册，定向发送避免误投递。
+            sendBroadcast(new android.content.Intent("aa.display.action.AA_DISPLAY_SHOWN")
+                    .setPackage("com.google.android.projection.gearhead"));
         } catch (Throwable ignored) {
         }
     }

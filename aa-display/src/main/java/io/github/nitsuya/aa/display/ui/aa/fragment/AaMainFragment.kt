@@ -202,6 +202,16 @@ class AaMainFragment : BaseFragment<FragmentAaMainBinding>(FragmentAaMainBinding
         @SuppressLint("ClickableViewAccessibility")
         override fun onAvailableDisplay(displayId: Int, create: Boolean) {
             Log.i(TAG, "onAvailableDisplay: displayId=$displayId create=$create surfaceAvailable=${baseBinding.tvDisplay.isAvailable}")
+            if (displayId == Display.INVALID_DISPLAY) {
+                // 服务端判定建屏失败/超时（含 20s 超时与排队请求的失败回调）。
+                // 必须复位请求状态，否则本页在本次生命周期内再也不会重试建屏。
+                runMain {
+                    this@AaMainFragment.displayId = Display.INVALID_DISPLAY
+                    isDisplayCreateRequested = false
+                    Log.e(TAG, "onAvailableDisplay: display creation failed on service side")
+                }
+                return
+            }
             this@AaMainFragment.displayId = displayId
             runMain {
                 attachDisplaySurface("available")

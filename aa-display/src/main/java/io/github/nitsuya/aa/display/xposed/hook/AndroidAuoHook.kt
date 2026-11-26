@@ -66,24 +66,40 @@ object AndroidAuoHook : BaseHook() {
             name == "callApplicationOnCreate"
             && parameterCount == 1
             && parameterTypes[0] == Application::class.java
-        }.hookBefore {
+        }.hookBefore { param ->
             onCreateApplication?.unhook()
-            EzXHelperInit.initAppContext()
-            System.loadLibrary("dexkit")
-            DexKitBridge.create(sourceDir).use { bridge ->
-                if(bridge == null){
-                    log(tagName,"DexKitBridge.create() failed")
-                    return@hookBefore
+            try {
+                EzXHelperInit.initAppContext()
+                // 不依赖 DexKit：即使特征失配，App 侧也要能启停车机服务器。
+                (param.args.getOrNull(0) as? Application)?.let { app ->
+                    runCatching { HeadUnitServerBridge.register(app) }
+                        .onFailure { e -> log(tagName, "HeadUnitServerBridge register failed", e) }
                 }
-                val measureTimeMillis = measureTimeMillis {
-                    hooks.forEach { h ->
-                        h.loadDexClass(bridge, target)
+                System.loadLibrary("dexkit")
+                val readyHooks = mutableListOf<AaHook>()
+                DexKitBridge.create(sourceDir).use { bridge ->
+                    if(bridge == null){
+                        log(tagName,"DexKitBridge.create() failed")
+                        return@hookBefore
                     }
+                    val measureTimeMillis = measureTimeMillis {
+                        hooks.forEach { h ->
+                            // 每个 hook 独立解析：某一个 DexKit 特征失配不能拖垮整块功能。
+                            runCatching { h.loadDexClass(bridge, target) }
+                                .onSuccess { readyHooks.add(h) }
+                                .onFailure { e ->
+                                    log(tagName, "${h.tagName} loadDexClass failed; skip this hook", e)
+                                }
+                        }
+                    }
+                    log(tagName,"${target.processName} load class measure ${measureTimeMillis}ms")
                 }
-                log(tagName,"${target.processName} load class measure ${measureTimeMillis}ms")
-            }
-            hooks.forEach { h ->
-                h.hook(config, target)
+                readyHooks.forEach { h ->
+                    runCatching { h.hook(config, target) }
+                        .onFailure { e -> log(tagName, "${h.tagName} hook failed", e) }
+                }
+            } catch (t: Throwable) {
+                log(tagName, "AndroidAuoHook init failed", t)
             }
         }
     }

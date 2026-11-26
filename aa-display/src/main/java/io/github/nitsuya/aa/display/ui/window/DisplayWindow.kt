@@ -46,6 +46,8 @@ class DisplayWindow(
 ): View.OnTouchListener {
     companion object {
         private const val TAG = "AADisplay_DisplayWindow"
+        /** 等待镜像窗布局稳定的最大帧数，超时后按当前尺寸居中。 */
+        private const val MAX_CENTER_ATTEMPTS = 30
     }
 
     private var mControllerBinding: WindowControllerBinding? = null
@@ -58,11 +60,47 @@ class DisplayWindow(
     private var mMirrorStatus = false
     private var mControllerCollapsed = true
     private var mControllerDockRight = true
-    private val mControllerPeekPx by lazy { (mContext.resources.displayMetrics.density * 14f).toInt() }
+    /** 收尾只执行一次：onDestroy 可能在延迟销毁期间被重复调用。 */
+    private var mDestroyed = false
+    /**
+     * 悬浮窗已经从 WindowManager 摘掉。
+     *
+     * 与 [mDestroyed] 区分：延迟销毁的倒计时期间窗口仍然有效，用户重连时
+     * [onResume] 仍要能取消销毁并把控制器放回去；只有 [close] 真正执行之后，
+     * 才禁止任何再挂窗的操作（否则在途的 onResume/showController 会把窗口加回来，
+     * 且此后没人再负责关闭它）。
+     */
+    private var mWindowsDetached = false
+    /** 首帧尚未测量时贴边计算的重试计数。 */
+    private var mDockRetryCount = 0
+    /** 镜像窗首帧尚未测量时居中/越界回收的重试计数。 */
+    private var mMirrorLayoutRetryCount = 0
+    /**
+     * 首次居中前的“尺寸稳定”探测状态。
+     *
+     * addView 后第一趟测量拿到的是**过渡尺寸**（SurfaceView 这时还是 0 高，wrap_content
+     * 只量到顶栏的高度），直接用它居中会把小窗摆到屏幕下方（实测 y=1165，而正确值约 764），
+     * 而且 mMirrorPositioned 一置位就再也不会纠正。这里等相邻两帧尺寸一致后再居中。
+     */
+    private var mMirrorCenterAttempt = 0
+    private var mMirrorCenterLastWidth = -1
+    private var mMirrorCenterLastHeight = -1
+    private val mControllerPeekPx by lazy { (mWindowContext.resources.displayMetrics.density * 14f).toInt() }
+
+    /**
+     * 读 dp 尺寸；模块资源表暂时不可用时（热装 APK 后 system_server 还缓存着旧路径，
+     * 会抛 Resources$NotFoundException）按 dp 数值兜底，避免整条 onResume 挂掉。
+     */
+    private fun dimenPx(resId: Int, fallbackDp: Float): Int {
+        val density = mWindowContext.resources.displayMetrics.density
+        return runCatching { mWindowContext.resources.getDimensionPixelSize(resId) }
+            .getOrElse { (density * fallbackDp).toInt() }
+            .coerceAtLeast(1)
+    }
 
     /** 控制器根布局为卡片阴影让出的透明边，贴边坐标要按它回退（见 applyControllerDockPosition） */
     private val mControllerShadowPadPx by lazy {
-        mContext.resources.getDimensionPixelSize(R.dimen.window_shadow_pad)
+        dimenPx(R.dimen.window_shadow_pad, 6f)
     }
 
     /**
@@ -78,31 +116,34 @@ class DisplayWindow(
     private var mMirrorPositioned = false
     private var mMirrorDragLastX = 0f
     private var mMirrorDragLastY = 0f
+    // 浮点累积位移：每帧不足 1px 的移动如果直接 toInt() 会被永久丢弃，慢速拖动会“丢步”。
+    private var mMirrorDragAccumX = 0f
+    private var mMirrorDragAccumY = 0f
+    private var mControllerDragAccumX = 0f
+    private var mControllerDragAccumY = 0f
     private var mResizeStartRawX = 0f
     private var mResizeStartRawY = 0f
     private var mResizeStartScale = 1f
     private var mResizing = false
 
     private val mMirrorShadowPadPx by lazy {
-        mContext.resources.getDimensionPixelSize(R.dimen.mirror_window_shadow_pad)
+        dimenPx(R.dimen.mirror_window_shadow_pad, 10f)
     }
     private val mMirrorMinWidthPx by lazy {
-        mContext.resources.getDimensionPixelSize(R.dimen.mirror_min_width)
+        dimenPx(R.dimen.mirror_min_width, 180f)
     }
     /** 多任务面板：单个图标条目的参考宽度 / RecyclerView 的 padding，用来算网格列数 */
     private val mMirrorRecentItemWidthPx by lazy {
-        mContext.resources.getDimensionPixelSize(R.dimen.mirror_recent_item_width).coerceAtLeast(1)
+        dimenPx(R.dimen.mirror_recent_item_width, 62f)
     }
     private val mMirrorRecentPaddingPx by lazy {
-        (mContext.resources.displayMetrics.density * 4f).toInt()
+        (mWindowContext.resources.displayMetrics.density * 4f).toInt()
     }
     /** 顶栏 + 底部导航条占掉的高度，算可用空间时要从屏幕高度里扣掉 */
     private val mMirrorChromeHeightPx by lazy {
-        mContext.resources.let {
-            it.getDimensionPixelSize(R.dimen.mirror_top_bar_height) +
-                it.getDimensionPixelSize(R.dimen.mirror_nav_btn_size) +
-                (it.displayMetrics.density * 8f).toInt()
-        }
+        dimenPx(R.dimen.mirror_top_bar_height, 34f) +
+            dimenPx(R.dimen.mirror_nav_btn_size, 48f) +
+            (mWindowContext.resources.displayMetrics.density * 8f).toInt()
     }
 
     /**
@@ -113,13 +154,59 @@ class DisplayWindow(
      * InvalidDisplayException（"Attempted to add window to a display that does
      * not exist"），首次 showController 就被 tryOrNull 吞掉。这里显式绑定默认屏，
      * 顺带让 currentWindowMetrics 也取到手机主屏的尺寸。
+     *
+     * 注意：尺寸/dp 换算也必须统一走这个 window context。用 mContext.resources
+     * 会把控制器贴到车机虚拟屏（如 1280 宽）的坐标上。
      */
-    private val mWindowManager: WindowManager by lazy {
-        val windowContext = tryOrNull {
-            mContext.createDisplayContext(Instances.displayManager.getDisplay(Display.DEFAULT_DISPLAY))
-                .createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null)
+    private val mWindowContext: Context by lazy {
+        val display = Instances.displayManager.getDisplay(Display.DEFAULT_DISPLAY)
+        val defaultMetrics = android.util.DisplayMetrics().also {
+            runCatching { display?.getRealMetrics(it) }
+        }
+        var ctx = display?.let { d ->
+            tryOrNull {
+                mContext.createDisplayContext(d)
+                    .createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null)
+            }
         } ?: mContext
-        windowContext.getSystemService(WindowManager::class.java)
+        // 再兜一层：AMS 的 mUiContext 换屏后可能带着车机密度（170），
+        // 即使 WindowManager 落在默认屏（460dpi），inflate 出来的 dp 尺寸也会缩小。
+        // 这里按默认屏的真实密度覆盖一次，保证悬浮球的 44dp 就是 44dp。
+        val ctxDpi = ctx.resources.displayMetrics.densityDpi
+        if (defaultMetrics.densityDpi > 0 && ctxDpi != defaultMetrics.densityDpi) {
+            val cfg = android.content.res.Configuration(ctx.resources.configuration).apply {
+                densityDpi = defaultMetrics.densityDpi
+            }
+            runCatching { ctx.createConfigurationContext(cfg) }.getOrNull()?.let { ctx = it }
+        }
+        ctx
+    }
+    private val mWindowManager: WindowManager by lazy {
+        mWindowContext.getSystemService(WindowManager::class.java)
+    }
+
+    /**
+     * 布局 inflate 用上下文：必须保留模块自己的 ClassLoader（MaterialCardView 等控件），
+     * 同时把 dp 密度修正到默认屏。不能用 [mWindowContext] 直接 inflate——它由 system_server
+     * 的 createWindowContext 生成，ClassLoader 是 android 包的，会 ClassNotFoundException。
+     */
+    private val mInflateContext: Context by lazy {
+        val display = Instances.displayManager.getDisplay(Display.DEFAULT_DISPLAY)
+        val metrics = android.util.DisplayMetrics().also {
+            runCatching { display?.getRealMetrics(it) }
+        }
+        val currentDpi = mContext.resources.displayMetrics.densityDpi
+        if (metrics.densityDpi > 0 && metrics.densityDpi != currentDpi) {
+            runCatching {
+                mContext.createConfigurationContext(
+                    android.content.res.Configuration(mContext.resources.configuration).apply {
+                        densityDpi = metrics.densityDpi
+                    }
+                )
+            }.getOrElse { mContext }
+        } else {
+            mContext
+        }
     }
 
     private var mDisplayRatio = 1f
@@ -206,33 +293,45 @@ class DisplayWindow(
                 }
             } catch (e : Throwable){}
         }
+        private var attached = false
+
         fun init(){
-            if(mScreenOffReplaceLockScreen){
-                AndroidHook.Power.hook()
-            } else if(isSupportInteractive){
-                mContext.registerReceiver(this, addAction(IntentFilter()))
-                onReceive(mContext, if(Instances.powerManager.isInteractive) Intent.ACTION_SCREEN_ON else Intent.ACTION_SCREEN_OFF)
-            } else {
-                if (!monitor.isHeld) {
-                    monitor.acquire()
+            // onResume 每次软重连都会调用；重复 registerReceiver 会抛
+            // "Receiver already registered"，先解绑再绑定。
+            if (attached) release()
+            attached = true
+            runCatching {
+                if(mScreenOffReplaceLockScreen){
+                    AndroidHook.Power.hook()
+                } else if(isSupportInteractive){
+                    mContext.registerReceiver(this, addAction(IntentFilter()))
+                    onReceive(mContext, if(Instances.powerManager.isInteractive) Intent.ACTION_SCREEN_ON else Intent.ACTION_SCREEN_OFF)
+                } else {
+                    if (!monitor.isHeld) {
+                        monitor.acquire()
+                    }
                 }
-            }
-            AndroidHook.FuckAppUseApplicationContext.hook()
-            if (AADisplayConfig.ForceAppFullscreenOnProjection.get(CoreManagerService.config)) {
-                AndroidHook.AppFullscreenOnProjection.hook()
-            }
+                AndroidHook.FuckAppUseApplicationContext.hook()
+                if (AADisplayConfig.ForceAppFullscreenOnProjection.get(CoreManagerService.config)) {
+                    AndroidHook.AppFullscreenOnProjection.hook()
+                }
+            }.onFailure { log(TAG, "interactiveMonitor.init failed", it) }
         }
         fun release(){
-            if(mScreenOffReplaceLockScreen){
-                AndroidHook.Power.unHook()
-            } else if(isSupportInteractive){
-                mContext.unregisterReceiver(this)
-                onReceive(mContext, Intent.ACTION_SCREEN_ON)
-            } else {
-                monitor.release()
-            }
-            AndroidHook.FuckAppUseApplicationContext.unHook()
-            AndroidHook.AppFullscreenOnProjection.unHook()
+            if (!attached) return
+            attached = false
+            runCatching {
+                if(mScreenOffReplaceLockScreen){
+                    AndroidHook.Power.unHook()
+                } else if(isSupportInteractive){
+                    mContext.unregisterReceiver(this)
+                    onReceive(mContext, Intent.ACTION_SCREEN_ON)
+                } else {
+                    if (monitor.isHeld) monitor.release()
+                }
+                AndroidHook.FuckAppUseApplicationContext.unHook()
+                AndroidHook.AppFullscreenOnProjection.unHook()
+            }.onFailure { log(TAG, "interactiveMonitor.release failed", it) }
         }
     }
 
@@ -240,7 +339,16 @@ class DisplayWindow(
 
     init {
         runCatching {
-            with(ContextThemeWrapper(mContext, R.style.Theme_AADisplay_Window)){
+            // mContext 来自 AMS 的 mUiContext，换屏后可能还绑在车机虚拟屏上（170dpi）；
+            // 直接 inflate 会让悬浮球只有 59px（正常 161px）。用默认屏密度覆盖后的
+            // 模块上下文 inflate，既保留模块 ClassLoader，又保证 dp 按手机屏幕换算。
+            val inflateContext = ContextThemeWrapper(mInflateContext, R.style.Theme_AADisplay_Window)
+            log(
+                TAG,
+                "inflate context density=${inflateContext.resources.displayMetrics.density} " +
+                    "dpi=${inflateContext.resources.displayMetrics.densityDpi}",
+            )
+            with(inflateContext) {
                 mControllerBinding = WindowControllerBinding.inflate(LayoutInflater.from(this))
                 // 小窗版镜像窗不再铺满全屏，多任务面板直接叠在车机画面上，
                 // 不需要再为状态栏留出 padding
@@ -506,11 +614,19 @@ class DisplayWindow(
             }
             MotionEvent.ACTION_MOVE -> {
                 val binding = mMirrorBinding ?: return true
-                mMirrorLayoutParams.x += (event.rawX - mMirrorDragLastX).toInt()
-                mMirrorLayoutParams.y += (event.rawY - mMirrorDragLastY).toInt()
+                mMirrorDragAccumX += event.rawX - mMirrorDragLastX
+                mMirrorDragAccumY += event.rawY - mMirrorDragLastY
                 mMirrorDragLastX = event.rawX
                 mMirrorDragLastY = event.rawY
-                tryOrNull { mWindowManager.updateViewLayout(binding.root, mMirrorLayoutParams) }
+                val dx = mMirrorDragAccumX.toInt()
+                val dy = mMirrorDragAccumY.toInt()
+                if (dx != 0 || dy != 0) {
+                    mMirrorDragAccumX -= dx
+                    mMirrorDragAccumY -= dy
+                    mMirrorLayoutParams.x += dx
+                    mMirrorLayoutParams.y += dy
+                    tryOrNull { mWindowManager.updateViewLayout(binding.root, mMirrorLayoutParams) }
+                }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> clampMirrorPosition()
         }
@@ -545,9 +661,9 @@ class DisplayWindow(
                 if (!mResizing) {
                     if (sqrt(dx.pow(2) + dy.pow(2)) <= 5f) return false
                     mResizing = true
-                    v.onTouchEvent(MotionEvent.obtain(event).apply {
-                        action = MotionEvent.ACTION_CANCEL
-                    })
+                    val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+                    v.onTouchEvent(cancel)
+                    cancel.recycle()
                 }
                 val aspect = (mDisplayHeight.toFloat() / mDisplayWidth).coerceAtLeast(0.01f)
                 val delta = (dx + dy / aspect) / 2f
@@ -576,7 +692,13 @@ class DisplayWindow(
         val bounds = mWindowManager.currentWindowMetrics.bounds
         val width = binding.root.width.takeIf { it > 0 } ?: binding.root.measuredWidth
         val height = binding.root.height.takeIf { it > 0 } ?: binding.root.measuredHeight
-        if (width <= 0 || height <= 0) return
+        if (width <= 0 || height <= 0) {
+            if (mMirrorLayoutRetryCount++ < 30 && binding.root.isAttachedToWindow) {
+                binding.root.postOnAnimation { clampMirrorPosition() }
+            }
+            return
+        }
+        mMirrorLayoutRetryCount = 0
         val slackX = bounds.width() - width
         val slackY = bounds.height() - height
         mMirrorLayoutParams.x = mMirrorLayoutParams.x.coerceIn(minOf(0, slackX), maxOf(0, slackX))
@@ -588,7 +710,44 @@ class DisplayWindow(
     private fun resetMirrorSizeAndPosition() {
         mMirrorScale = 1f
         updateDipslaySize()
-        mMirrorBinding?.root?.post { centerMirror() }
+        // updateDipslaySize 刚改过 svMirror 的布局参数，这一帧量到的还是旧尺寸，
+        // 同样要等布局稳定后再居中。
+        mMirrorPositioned = false
+        scheduleCenterMirror()
+    }
+
+    /**
+     * 等小窗尺寸稳定后再居中。
+     *
+     * 用 postOnAnimation 连续采样：同一帧的 measure/layout 还没结束时拿到的宽高不可信，
+     * 相邻两帧一致才说明布局已经稳定。最多试 [MAX_CENTER_ATTEMPTS] 帧，避免某次
+     * 布局异常时永远不居中。
+     */
+    private fun scheduleCenterMirror() {
+        val binding = mMirrorBinding ?: return
+        mMirrorCenterAttempt = 0
+        mMirrorCenterLastWidth = -1
+        mMirrorCenterLastHeight = -1
+        binding.root.postOnAnimation { centerMirrorWhenStable() }
+    }
+
+    private fun centerMirrorWhenStable() {
+        val binding = mMirrorBinding ?: return
+        if (!mMirrorStatus) return
+        val width = binding.root.width.takeIf { it > 0 } ?: binding.root.measuredWidth
+        val height = binding.root.height.takeIf { it > 0 } ?: binding.root.measuredHeight
+        val stable = width > 0 && height > 0 &&
+            width == mMirrorCenterLastWidth && height == mMirrorCenterLastHeight
+        mMirrorCenterLastWidth = width
+        mMirrorCenterLastHeight = height
+        val attempts = mMirrorCenterAttempt++
+        if (width > 0 && height > 0 && (stable || attempts >= MAX_CENTER_ATTEMPTS)) {
+            centerMirror()
+            return
+        }
+        if (binding.root.isAttachedToWindow) {
+            binding.root.postOnAnimation { centerMirrorWhenStable() }
+        }
     }
 
     /** 首次显示（以及恢复默认）时把小窗放到屏幕中间 */
@@ -597,7 +756,13 @@ class DisplayWindow(
         val bounds = mWindowManager.currentWindowMetrics.bounds
         val width = binding.root.width.takeIf { it > 0 } ?: binding.root.measuredWidth
         val height = binding.root.height.takeIf { it > 0 } ?: binding.root.measuredHeight
-        if (width <= 0 || height <= 0) return
+        if (width <= 0 || height <= 0) {
+            if (mMirrorLayoutRetryCount++ < 30 && binding.root.isAttachedToWindow) {
+                binding.root.postOnAnimation { centerMirror() }
+            }
+            return
+        }
+        mMirrorLayoutRetryCount = 0
         mMirrorLayoutParams.x = ((bounds.width() - width) / 2).coerceAtLeast(0)
         mMirrorLayoutParams.y = ((bounds.height() - height) / 2).coerceAtLeast(0)
         mMirrorPositioned = true
@@ -605,11 +770,24 @@ class DisplayWindow(
     }
 
     suspend fun onResume(width: Int, height: Int){
+        // 窗口已经摘掉后可能还有在途的 onResume/重连调用：
+        // 一旦放行就会把刚摘掉的悬浮窗重新加回来，且再也没人收尾。
+        // 注意不能看 mDestroyed：延迟销毁倒计时期间的窗口仍然有效，重连要能取消倒计时。
+        if (mWindowsDetached) {
+            log(TAG, "onResume ignored: windows already detached")
+            return
+        }
         mDisplayWidth = width
         mDisplayHeight = height
+        // 软重连可能带新的 density，不更新会让顶栏一直显示旧值。
+        mDensityDpi = displayAdapter.mDensityDpi
         mMirrorBinding?.tvVirtualDisplayInfo?.text = "$mDisplayWidth*$mDisplayHeight,$mDensityDpi"
         interactiveMonitor.init()
+        // 投屏在延迟销毁倒计时内重连：取消销毁，窗口恢复有效，
+        // 否则下一次 onDestroy 会命中 "already destroyed" 而跳过倒计时直接收尾。
         mDestroyJob?.cancelAndJoin()
+        mDestroyJob = null
+        mDestroyed = false
         updateDipslaySize()
         mControllerBinding?.apply {
             tvDestroyTime.visibility = View.GONE
@@ -619,22 +797,67 @@ class DisplayWindow(
     }
 
     suspend fun onDestroyPromptly() {
-        interactiveMonitor.release()
-        toggleDisplayPower(true)
+        log(TAG, "onDestroyPromptly: win=${System.identityHashCode(this)} already=$mDestroyed")
+        // 即使已经进入销毁倒计时（mDestroyed=true），也必须取消那个倒计时：
+        // 旧会话的窗口倒计时到点会回调 onDestroySucceed -> teardownDisplayNow()，
+        // 把之后建立的新会话（尤其是 AAP Route B 的新虚拟屏）一起拆掉。
         mDestroyJob?.cancelAndJoin()
+        mDestroyJob = null
+        if (mDestroyed) {
+            // 进入倒计时时已经释放过 monitor / 恢复过屏幕电源，这里只补关窗。
+            close()
+            return
+        }
+        mDestroyed = true
+        runCatching { interactiveMonitor.release() }
+        runCatching { toggleDisplayPower(true) }
         close()
     }
+
+    /**
+     * 非 suspend 的兜底关窗。
+     *
+     * system_server 侧的看门狗 / 客户端死亡路径必须立刻摘掉悬浮窗，既不能等
+     * [onDestroy] 的倒计时，也不能假设 [close] 已经执行过（倒计时协程可能早已终止）。
+     * 重复调用是幂等的。
+     */
+    fun detachWindowsNow() {
+        log(
+            TAG,
+            "detachWindowsNow: win=${System.identityHashCode(this)} " +
+                "controller=$mControllerStatus mirror=$mMirrorStatus"
+        )
+        mDestroyed = true
+        mDestroyJob?.cancel()
+        // 看门狗 / 客户端死亡路径不会走 onDestroy 的收尾，屏幕电源与 monitor 必须在这里
+        // 释放；否则虚拟屏已经收掉，监视器仍持有 SCREEN_BRIGHT wake lock（还会关着护眼）。
+        runCatching { interactiveMonitor.release() }
+            .onFailure { log(TAG, "detachWindowsNow release monitor failed", it) }
+        runCatching { toggleDisplayPower(true) }
+            .onFailure { log(TAG, "detachWindowsNow restore display power failed", it) }
+        runCatching { close() }
+            .onFailure { log(TAG, "detachWindowsNow failed", it) }
+    }
     suspend fun onDestroy(onDestroySucceed: () -> Unit) {
-        interactiveMonitor.release()
-        toggleDisplayPower(true)
+        if (mDestroyed) {
+            // 延迟销毁期间可能再次收到 onDestroy；保证收尾只执行一次，且不重复 unregister。
+            log(TAG, "onDestroy ignored: already destroyed")
+            onDestroySucceed()
+            return
+        }
+        mDestroyed = true
+        runCatching { interactiveMonitor.release() }
+        runCatching { toggleDisplayPower(true) }
         mDestroyJob?.cancelAndJoin()
 
-        if(mDelayDestroyTime == 0){
+        val binding = mControllerBinding
+        if(mDelayDestroyTime == 0 || binding == null){
+            // 悬浮窗 inflate 失败时也必须走完收尾：释放 VD、恢复护眼、清投屏状态位。
             close()
             onDestroySucceed()
             return
         }
-        mControllerBinding?.apply {
+        binding.apply {
             ibMirrorDisplay.visibility = View.GONE
             tvDestroyTime.setOnClickListener {
                 mDestroyJob?.cancel()
@@ -685,45 +908,92 @@ class DisplayWindow(
     }
 
     private fun showController(){
+        // 已经摘过窗的实例不能再加窗，否则会留下无人收尾的悬浮窗。
+        if (mWindowsDetached) {
+            log(TAG, "showController ignored: windows already detached")
+            return
+        }
         if(mMirrorStatus){
             hideMirror()
         }
         if(mControllerStatus) return
         mControllerBinding?.apply {
-            tryOrNull { mWindowManager.addView(root, mControllerLayoutParams) }
+            // 状态位和真实窗口可能不同步（上一次 removeView 失败被吞掉等）。
+            // 已经挂在 WindowManager 上就只接管状态，不能重复 addView。
+            if (!root.isAttachedToWindow) {
+                // addView 失败时不能把状态置 true，否则本会话内永远不会再尝试显示。
+                val added = runCatching { mWindowManager.addView(root, mControllerLayoutParams) }
+                    .onFailure { log(TAG, "addView(controller) failed", it) }
+                    .isSuccess
+                if (!added) return
+            }
             applyControllerCollapsedState()
-            root.post {
+            // post 会在 traversal 之前执行，此时 view 还没测量；用 postOnAnimation 并允许内部重试。
+            root.postOnAnimation {
                 applyControllerDockPosition()
             }
             mChangeAlphaCountDownTimer.start()
             mControllerStatus = true
+            log(TAG, "controller shown: win=${System.identityHashCode(this)} root=${System.identityHashCode(root)}")
         }
     }
     private fun hideController(){
-        if(!mControllerStatus) return
         mControllerBinding?.apply {
-            tryOrNull { mWindowManager.removeView(root) }
+            val attached = root.isAttachedToWindow
+            // 只要视图还挂在 WindowManager 上就必须 remove。只信 mControllerStatus 的话，
+            // 状态位一旦和真实窗口不同步，控制器窗口会永久留在屏幕上（实测退出投屏后残留）。
+            if (!mControllerStatus && !attached) return
+            // removeView 是**异步**的（deferred doDie），先 remove 再读 isAttachedToWindow
+            // 会一直为 true，下一次 close 还会重复 remove。这里用 immediate 同步摘除。
+            runCatching { mWindowManager.removeViewImmediate(root) }
+                .onFailure { log(TAG, "removeView(controller) failed", it) }
             mControllerStatus = false
+            log(
+                TAG,
+                "controller hidden: win=${System.identityHashCode(this)} " +
+                    "root=${System.identityHashCode(root)} attached=$attached " +
+                    "after=${root.isAttachedToWindow}"
+            )
         }
     }
 
     private fun showMirror(){
+        if (mWindowsDetached) {
+            log(TAG, "showMirror ignored: windows already detached")
+            return
+        }
         if(mMirrorStatus) return
         hideRecentTask()
         mMirrorBinding?.apply {
-            tryOrNull { mWindowManager.addView(root, mMirrorLayoutParams) }
+            if (!root.isAttachedToWindow) {
+                val added = runCatching { mWindowManager.addView(root, mMirrorLayoutParams) }
+                    .onFailure { log(TAG, "addView(mirror) failed", it) }
+                    .isSuccess
+                if (!added) {
+                    // 镜像窗起不来就退回控制器，别让用户什么都没有。
+                    showController()
+                    return
+                }
+            }
             mMirrorStatus = true
-            // 第一次弹出时居中；之后保留用户上次拖到的位置，只做越界回收
-            root.post {
-                if (mMirrorPositioned) clampMirrorPosition() else centerMirror()
+            // 第一次弹出时居中；之后保留用户上次拖到的位置，只做越界回收。
+            // 居中必须等布局稳定：addView 后第一趟测到的是过渡尺寸（见 mMirrorCenterAttempt）。
+            if (mMirrorPositioned) {
+                root.post { clampMirrorPosition() }
+            } else {
+                scheduleCenterMirror()
             }
         }
     }
     private fun hideMirror(){
-        if(!mMirrorStatus) return
         mMirrorBinding?.apply {
-            tryOrNull { mWindowManager.removeView(root) }
+            val attached = root.isAttachedToWindow
+            // 同 hideController：以视图是否还挂着为准，避免状态位不同步导致窗口残留。
+            if (!mMirrorStatus && !attached) return
+            runCatching { mWindowManager.removeViewImmediate(root) }
+                .onFailure { log(TAG, "removeView(mirror) failed", it) }
             mMirrorStatus = false
+            log(TAG, "mirror hidden: win=${System.identityHashCode(this)} attached=$attached after=${root.isAttachedToWindow}")
         }
     }
 
@@ -780,10 +1050,19 @@ class DisplayWindow(
 
     private fun applyControllerDockPosition() {
         val binding = mControllerBinding ?: return
-        val displayMetrics = mContext.resources.displayMetrics
+        // 用默认屏窗口的 bounds，而不是 Resources.displayMetrics：多窗口/旋转/车机 Resources 下两者会不一致。
+        val bounds = tryOrNull { mWindowManager.currentWindowMetrics.bounds } ?: return
         val visibleWidth = getControllerVisibleWidth(binding)
         val visibleHeight = getControllerVisibleHeight(binding)
-        if (visibleWidth <= 0 || visibleHeight <= 0) return
+        if (visibleWidth <= 0 || visibleHeight <= 0) {
+            // addView 后第一帧还没测量完，拿不到宽高；此时直接 return 会让控制器停在 (0,0)。
+            // 下一帧再试，最多 30 帧。
+            if (mDockRetryCount++ < 30 && binding.root.isAttachedToWindow) {
+                binding.root.postOnAnimation { applyControllerDockPosition() }
+            }
+            return
+        }
+        mDockRetryCount = 0
 
         // 根布局给卡片阴影留了一圈透明 padding，卡片左上角相对窗口原点偏移了一个 pad，
         // 而 x/y 定位的是窗口。四种贴边情况算出来的都是「卡片该在哪」，所以统一减掉
@@ -791,13 +1070,13 @@ class DisplayWindow(
         val pad = mControllerShadowPadPx
         val dockX = if (mControllerCollapsed) {
             if (mControllerDockRight) {
-                displayMetrics.widthPixels - mControllerPeekPx
+                bounds.width() - mControllerPeekPx
             } else {
                 -(visibleWidth - mControllerPeekPx)
             }
         } else {
             if (mControllerDockRight) {
-                displayMetrics.widthPixels - visibleWidth
+                bounds.width() - visibleWidth
             } else {
                 0
             }
@@ -805,7 +1084,7 @@ class DisplayWindow(
         mControllerLayoutParams.x = dockX - pad
         mControllerLayoutParams.y = mControllerLayoutParams.y.coerceIn(
             -pad,
-            (displayMetrics.heightPixels - visibleHeight - pad).coerceAtLeast(-pad)
+            (bounds.height() - visibleHeight - pad).coerceAtLeast(-pad)
         )
         tryOrNull { mWindowManager.updateViewLayout(binding.root, mControllerLayoutParams) }
     }
@@ -827,6 +1106,8 @@ class DisplayWindow(
     }
 
     private fun close() {
+        log(TAG, "close: win=${System.identityHashCode(this)}")
+        mWindowsDetached = true
         mChangeAlphaCountDownTimer.cancel()
         hideMirror()
         hideController()
@@ -843,8 +1124,10 @@ class DisplayWindow(
                         setTag(R.id.drag_last_y, event.rawY)
                         setTag(R.id.drag_distance, 0f)
                     }
+                    mControllerDragAccumX = 0f
+                    mControllerDragAccumY = 0f
                     mChangeAlphaCountDownTimer.cancel()
-                    ViewCompat.animate(root).setDuration(200).alpha(0.9f).start()
+                    ViewCompat.animate(root).setDuration(200).alpha(1.0f).start()
                 }
                 MotionEvent.ACTION_MOVE -> {
                     isDrag = v.getTag(R.id.is_drag) as Boolean
@@ -856,30 +1139,42 @@ class DisplayWindow(
                         val dragSumDistance = abs(sqrt((dragMoveX - dragLastX).pow(2) + (dragMoveY - dragLastY).pow(2))) + (v.getTag(R.id.drag_distance) as? Float ?: 0f)
                         if(dragSumDistance > 5f){
                             isDrag = true
-                            v.apply {
-                                setTag(R.id.is_drag, true)
-                                onTouchEvent(MotionEvent.obtain(event).apply {
-                                    action = MotionEvent.ACTION_CANCEL
-                                })
-                            }
+                            v.setTag(R.id.is_drag, true)
+                            // 掐掉 View 排队中的点击/长按，避免拖动结束时误触发。
+                            val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+                            v.onTouchEvent(cancel)
+                            cancel.recycle()
                         } else {
                             v.setTag(R.id.drag_distance, dragSumDistance)
                         }
                     }
-                    mWindowManager.updateViewLayout(root, mControllerLayoutParams.apply {
-                        x = (dragMoveX - dragLastX + x).toInt()
-                        y = (dragMoveY - dragLastY + y).toInt()
-                    })
+                    // 只有越过拖动阈值后才移动窗口；轻微抖动的点击不应让面板位移。
+                    if (isDrag) {
+                        mControllerDragAccumX += dragMoveX - dragLastX
+                        mControllerDragAccumY += dragMoveY - dragLastY
+                        val dx = mControllerDragAccumX.toInt()
+                        val dy = mControllerDragAccumY.toInt()
+                        if (dx != 0 || dy != 0) {
+                            mControllerDragAccumX -= dx
+                            mControllerDragAccumY -= dy
+                            mControllerLayoutParams.x += dx
+                            mControllerLayoutParams.y += dy
+                            tryOrNull { mWindowManager.updateViewLayout(root, mControllerLayoutParams) }
+                        }
+                    }
                     v.apply {
                         setTag(R.id.drag_last_x, dragMoveX)
                         setTag(R.id.drag_last_y, dragMoveY)
                     }
                 }
-                MotionEvent.ACTION_UP -> {
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     isDrag = v.getTag(R.id.is_drag) as Boolean
-                    val displayMetrics = mContext.resources.displayMetrics
-                    mControllerDockRight = event.rawX > (displayMetrics.widthPixels / 2f)
+                    val bounds = tryOrNull { mWindowManager.currentWindowMetrics.bounds }
+                    if (bounds != null) {
+                        mControllerDockRight = event.rawX > (bounds.width() / 2f)
+                    }
                     applyControllerDockPosition()
+                    // CANCEL 时也要恢复自动淡出，否则 alpha 会停在 1.0 不再变化。
                     mChangeAlphaCountDownTimer.start()
                 }
             }

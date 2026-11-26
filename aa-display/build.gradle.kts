@@ -13,8 +13,8 @@ android {
         applicationId = "io.github.nitsuya.aa.display"
         minSdk = 31
         targetSdk = 36
-        versionCode = 3017
-        versionName = "0.24#17.8-e3"
+        versionCode = 3018
+        versionName = "0.24#18.1-e4"
         buildConfigField("long", "BUILD_TIME", buildTime.toString())
     }
 
@@ -45,7 +45,9 @@ android {
                 "META-INF/proguard/**",
                 "META-INF/services/**",
                 "META-INF/versions/**",
-                "kotlin/**"
+                "kotlin/**",
+                // aare-aap / aare-proto 的 .proto 源码只给 protoc 用，不进 APK。
+                "**/*.proto"
             )
         )
     }
@@ -167,7 +169,11 @@ dependencies {
     }
     implementation("com.github.kyuubiran:EzXHelper:1.0.3")
     implementation("com.github.topjohnwu.libsu:core:5.2.0")
-    implementation("org.luckypray:dexkit:2.0.0-rc3")
+    // AARE AAP 协议栈（GPL-3.0-or-later，vendored 在 vendor/aare-aap，见 NOTICE.md）。
+    implementation(project(":aare-aap"))
+    // 2.3.0 起 native 库按 16 KB 页对齐（Android 15+/16 KB 设备必需）；
+    // 旧版 rc3 的 libdexkit.so 是 4 KB 对齐，Android 17 会弹兼容性警告并可能加载失败。
+    implementation("org.luckypray:dexkit:2.3.0")
 //    implementation("com.github.martoreto:aauto-sdk:v4.7")
     implementation(files("./libs/aauto.aar"))
 

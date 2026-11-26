@@ -1,0 +1,10 @@
+syntax="proto2";
+
+option optimize_for=SPEED;
+
+package aap_protobuf.service.radio.message;
+
+message Range {
+    optional int32 min = 1;
+    optional int32 max = 2;
+}

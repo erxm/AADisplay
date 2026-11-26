@@ -1,0 +1,12 @@
+syntax="proto2";
+
+import "aap_protobuf/service/sensorsource/message/SensorType.proto";
+
+package aap_protobuf.service.sensorsource.message;
+
+message Sensor {
+    // AARE: required -> optional (wire-identical). The enum is closed, so a sensor type newer than
+    // this list would leave a required field unset and fail the whole service discovery response.
+    // Readers skip sensors without hasSensorType().
+    optional SensorType sensor_type = 1;
+}

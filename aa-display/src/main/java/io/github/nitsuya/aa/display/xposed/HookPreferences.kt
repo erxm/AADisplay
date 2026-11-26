@@ -68,6 +68,12 @@ object HookPreferences {
         return config
     }
 
+    /** 解析失败后的退避，避免每次 hook 都打一次 IPC；窗口内继续用默认值。 */
+    private const val RESOLVE_RETRY_BACKOFF_MS = 2_000L
+
+    @Volatile
+    private var lastResolveFailureUptimeMs = 0L
+
     @Synchronized
     private fun resolve(): SharedPreferences? {
         if (resolved) return cached
@@ -77,13 +83,24 @@ object HookPreferences {
             resolved = true
             return null
         }
-        cached = runCatching { provider() }.onFailure { e ->
-            log(TAG, "failed to obtain module preferences; using defaults", e)
-        }.getOrNull()
-        resolved = true
-        if (cached == null) {
-            log(TAG, "module preferences unavailable; using defaults")
+        val now = android.os.SystemClock.uptimeMillis()
+        if (lastResolveFailureUptimeMs != 0L &&
+            now - lastResolveFailureUptimeMs in 0 until RESOLVE_RETRY_BACKOFF_MS
+        ) {
+            return null
         }
-        return cached
+        val result = runCatching { provider() }.onFailure { e ->
+            log(TAG, "failed to obtain module preferences; will retry", e)
+        }.getOrNull()
+        if (result != null) {
+            cached = result
+            resolved = true
+            lastResolveFailureUptimeMs = 0L
+            return result
+        }
+        // 关键：解析失败不能标记为 resolved，否则整个进程生命周期都读不到配置。
+        lastResolveFailureUptimeMs = now
+        log(TAG, "module preferences unavailable; using defaults until next retry")
+        return null
     }
 }

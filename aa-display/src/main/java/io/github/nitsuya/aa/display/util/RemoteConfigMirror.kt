@@ -65,7 +65,8 @@ object RemoteConfigMirror {
     @Synchronized
     fun install(context: Context) {
         if (installed) return
-        installed = true
+        // 先完成初始化再置位：任何一步失败都要允许后续重试，
+        // 否则一次早期失败会让配置镜像在进程生命周期内永久失效。
         val prefs = runCatching {
             SharedPreferencesAccess.openForHooks(context, AADisplayConfig.ConfigName)
         }.onFailure { Log.w(TAG, "open local config failed", it) }.getOrNull() ?: return
@@ -73,6 +74,7 @@ object RemoteConfigMirror {
         prefs.registerOnSharedPreferenceChangeListener(localListener)
         runCatching { XposedServiceHelper.registerListener(serviceListener) }
             .onFailure { Log.w(TAG, "registerListener failed", it) }
+        installed = true
     }
 
     /** 本地 → 远端全量同步。绑定成功时跑一次，把历史配置补齐。 */

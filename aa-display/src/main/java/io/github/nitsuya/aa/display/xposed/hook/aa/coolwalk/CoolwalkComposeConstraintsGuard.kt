@@ -52,7 +52,6 @@ object CoolwalkComposeConstraintsGuard {
         if (factories.isNotEmpty()) return
         val candidates = runCatching {
             bridge.findMethod {
-                searchPackages = listOf("")
                 matcher {
                     usingStrings { add(FAILURE_MARKER, StringMatchType.Contains, false) }
                 }

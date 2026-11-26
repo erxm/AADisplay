@@ -56,4 +56,11 @@ interface ICoreManager {
      * broadcasts on Android 13+, so relay the full-bleed signal through the system uid.
      */
     oneway void notifyCoolwalkFullBleed();
+
+    /**
+     * AAP route B: the VirtualDisplay was created by the app process (healthy SF
+     * composition); system_server only takes over task hosting / input injection /
+     * mirroring / phone-side DisplayWindow. Appended at end to keep Stub ordinals stable.
+     */
+    void onExternalDisplayAttached(int displayId, int width, int height, int densityDpi, IVirtualDisplayCreatedListener listener);
 }

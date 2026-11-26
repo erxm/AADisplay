@@ -32,6 +32,7 @@ import io.github.nitsuya.aa.display.xposed.IShellManager
 import io.github.nitsuya.aa.display.xposed.TipUtil
 import io.github.nitsuya.aa.display.xposed.log
 import io.github.nitsuya.aa.display.xposed.util.Instances
+import io.github.nitsuya.template.bases.runIO
 import io.github.nitsuya.template.bases.runMain
 
 
@@ -81,6 +82,22 @@ class AaVirtualDisplayAdapter(
     private val mTaskStackListener = TaskStackListener()
     var mDisplayId = Display.INVALID_DISPLAY
     var mDensityDpi: Int = 0
+    /** 路线 B：虚拟屏由模块 App 进程创建并持有，system_server 只做任务托管/输入/镜像。 */
+    var mExternalOwned = false
+
+    /**
+     * 会话已结束（收到 onDestroyDisplay），但延迟销毁倒计时还没到点。
+     * 外接屏在 App 释放 VD 后立刻消失，此时不能再按“Home 任务没了就重拉”自愈，
+     * 否则会往不存在的 displayId 反复 startActivity。
+     */
+    @Volatile
+    private var mSessionEnded = false
+
+    fun markSessionEnded(reason: String) {
+        if (!mExternalOwned || mSessionEnded) return
+        mSessionEnded = true
+        log(TAG, "session ended[$reason]: stop auto-relaunch on display=$mDisplayId")
+    }
 
     private val mTransaction = SurfaceControl.Transaction()
     private var mSurfaceControls = mutableMapOf<SurfaceControl, SurfaceControl>()
@@ -96,9 +113,18 @@ class AaVirtualDisplayAdapter(
             mShellManager = IShellManager.Stub.asInterface(service)
             if(mDoInit) return
             mDoInit = !mDoInit
-            mShellManager?.createVirtualDisplayBefore()
-            runMain {
-               onReady(this@AaVirtualDisplayAdapter)
+            // 这是同步 Binder 调用，会跑用户配置的 root 命令（可能几秒）；本回调在 system_server
+            // 主线程上，同步等它会被 Watchdog 抓，所以先丢到 IO，再回主线程通知就绪。
+            val shellManager = mShellManager
+            runIO {
+                try {
+                    shellManager?.createVirtualDisplayBefore()
+                } catch (e: Throwable) {
+                    log(TAG, "createVirtualDisplayBefore failed", e)
+                }
+                runMain {
+                   onReady(this@AaVirtualDisplayAdapter)
+                }
             }
         }
         override fun onServiceDisconnected(name: ComponentName) {
@@ -120,6 +146,11 @@ class AaVirtualDisplayAdapter(
     }
 
     fun setSurface(surface: Surface?){
+        if (mExternalOwned) {
+            // 外接模式下虚拟屏归 App 进程，surface 由 App 自己 set。
+            log(TAG, "setSurface ignored in external mode: surface=${surface != null}")
+            return
+        }
         if (!::mVirtualDisplay.isInitialized) {
             log(TAG, "setSurface ignored before virtual display init: surface=${surface != null}")
             return
@@ -129,54 +160,75 @@ class AaVirtualDisplayAdapter(
     }
 
     @SuppressLint("WrongConstant")
-    fun onConnected(width: Int, height: Int, densityDpi: Int, surface: Surface?, onVirtualDisplayCreated: ((Int) -> Unit)) {
+    fun onConnected(
+        width: Int,
+        height: Int,
+        densityDpi: Int,
+        surface: Surface?,
+        externalDisplayId: Int = Display.INVALID_DISPLAY,
+        onVirtualDisplayCreated: ((Int) -> Unit),
+    ) {
         mIsDestroying = false
         mTrackedPackageUsers.clear()
         refreshLauncherPackage("connect")
         trackPackage(mLauncherPackage, 0)
         trackPackage(mHomePackage, 0)
-        val indent = Binder.clearCallingIdentity()
-        try {
-            mVirtualDisplay = Instances.displayManager.createVirtualDisplay(
-                "AADisplay-${System.currentTimeMillis()}",
-                width,
-                height,
-                densityDpi,
-                surface,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
-                    or DisplayManager.VIRTUAL_DISPLAY_FLAG_SECURE
-                    or DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
-                    or DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
-                    //or (1 shl 8) //DisplayManager.VIRTUAL_DISPLAY_FLAG_DESTROY_CONTENT_ON_REMOVAL
-                    or (1 shl 10) //DisplayManager.VIRTUAL_DISPLAY_FLAG_TRUSTED
-                    or (1 shl 11) //DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_DISPLAY_GROUP
-                    or (1 shl 12) //DisplayManager.VIRTUAL_DISPLAY_FLAG_ALWAYS_UNLOCKED
-                    or (1 shl 13) //DisplayManager.VIRTUAL_DISPLAY_FLAG_TOUCH_FEEDBACK_DISABLED
-            )
-        } finally {
-            Binder.restoreCallingIdentity(indent)
-        }
-        mDisplayId = mVirtualDisplay.display.displayId
-        mDensityDpi = densityDpi
-        log(TAG, "virtual display created: id=$mDisplayId, ${width}x$height,$densityDpi, surface=${surface != null}, launcher=${mLauncherPackage.orEmpty()}")
-
-        try {
-            Instances.iWindowManager.apply {
-                // 与 nitsuya 上游一致：按配置下发，不再强制 LOCAL。
-                // 默认 FALLBACK_DISPLAY(1)，虚拟屏唤起的输入法落到手机主屏，
-                // 车机那块 1280x720 横屏不再被键盘挡住半屏。
-                val imePolicy = AADisplayConfig.DisplayImePolicy.get(config).let {
-                    if (it in DISPLAY_IME_POLICY_LOCAL..DISPLAY_IME_POLICY_HIDE) it
-                    else DISPLAY_IME_POLICY_FALLBACK_DISPLAY
-                }
-                log(TAG, "set display IME policy: $imePolicy")
-                setDisplayImePolicy(mDisplayId, imePolicy)
-                setShouldShowWithInsecureKeyguard(mDisplayId, false)
-                setShouldShowSystemDecors(mDisplayId, false)
+        mExternalOwned = externalDisplayId != Display.INVALID_DISPLAY
+        if (mExternalOwned) {
+            // 路线 B（AAP）：屏已由模块 App 进程建好，这里只接管任务托管/输入注入/镜像，
+            // 不再自己 createVirtualDisplay、不碰 surface（owner 是 App 进程）。
+            mDisplayId = externalDisplayId
+            mDensityDpi = densityDpi
+            log(TAG, "external virtual display attached: id=$mDisplayId, ${width}x$height,$densityDpi, launcher=${mLauncherPackage.orEmpty()}")
+        } else {
+            val indent = Binder.clearCallingIdentity()
+            try {
+                mVirtualDisplay = Instances.displayManager.createVirtualDisplay(
+                    "AADisplay-${System.currentTimeMillis()}",
+                    width,
+                    height,
+                    densityDpi,
+                    surface,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
+                        or DisplayManager.VIRTUAL_DISPLAY_FLAG_SECURE
+                        or DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
+                        or DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
+                        //or (1 shl 8) //DisplayManager.VIRTUAL_DISPLAY_FLAG_DESTROY_CONTENT_ON_REMOVAL
+                        or (1 shl 10) //DisplayManager.VIRTUAL_DISPLAY_FLAG_TRUSTED
+                        or (1 shl 11) //DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_DISPLAY_GROUP
+                        or (1 shl 12) //DisplayManager.VIRTUAL_DISPLAY_FLAG_ALWAYS_UNLOCKED
+                        or (1 shl 13) //DisplayManager.VIRTUAL_DISPLAY_FLAG_TOUCH_FEEDBACK_DISABLED
+                )
+            } finally {
+                Binder.restoreCallingIdentity(indent)
             }
-        } catch (e : Throwable){
-            log(TAG, "设置虚拟屏幕参数失败: ", e)
+            mDisplayId = mVirtualDisplay.display.displayId
+            mDensityDpi = densityDpi
+            log(TAG, "virtual display created: id=$mDisplayId, ${width}x$height,$densityDpi, surface=${surface != null}, launcher=${mLauncherPackage.orEmpty()}")
         }
+
+        // 外接屏对 setDisplayImePolicy 会抛 SecurityException（untrusted virtual display），
+        // 若仍放在同一个 try 里，会把后的 setShouldShowSystemDecors(false) 一起吞掉，
+        // SystemUI 就会把锁屏时钟画到虚拟屏上（2026-11-21 实测）。逐项独立处理。
+        runCatching {
+            // 与 nitsuya 上游一致：按配置下发，不再强制 LOCAL。
+            // 默认 FALLBACK_DISPLAY(1)，虚拟屏唤起的输入法落到手机主屏，
+            // 车机那块 1280x720 横屏不再被键盘挡住半屏。
+            val imePolicy = AADisplayConfig.DisplayImePolicy.get(config).let {
+                if (it in DISPLAY_IME_POLICY_LOCAL..DISPLAY_IME_POLICY_HIDE) it
+                else DISPLAY_IME_POLICY_FALLBACK_DISPLAY
+            }
+            log(TAG, "set display IME policy: $imePolicy")
+            Instances.iWindowManager.setDisplayImePolicy(mDisplayId, imePolicy)
+        }.onFailure { log(TAG, "setDisplayImePolicy failed: ${it.message}") }
+        runCatching {
+            Instances.iWindowManager.setShouldShowWithInsecureKeyguard(mDisplayId, false)
+        }.onFailure { log(TAG, "setShouldShowWithInsecureKeyguard failed: ${it.message}") }
+        runCatching {
+            Instances.iWindowManager.setShouldShowSystemDecors(mDisplayId, false)
+        }.onFailure { log(TAG, "setShouldShowSystemDecors failed: ${it.message}") }
+
+        if (!mExternalOwned) {
         //mDisplayWindowManager = context.createDisplayContext(mVirtualDisplay.display).getSystemService(WindowManager::class.java).apply {
         mDisplayWindowManager = context.createDisplayContext(mVirtualDisplay.display).createWindowContext(mVirtualDisplay.display, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null).getSystemService(WindowManager::class.java).apply {
             addView(
@@ -201,6 +253,11 @@ class AaVirtualDisplayAdapter(
                 }
             )
         }
+        } else {
+            // App 自建的虚拟屏合成正常，不需要透明 overlay 强制点亮；
+            // 而且这个窗口要在 owner 进程的 display context 里建，system_server 建不到。
+            log(TAG, "external mode: skip force view")
+        }
         Instances.iActivityTaskManager.registerTaskStackListener(mTaskStackListener)
         // When virtual display is created, launch default package first (if configured)
         if(mLauncherPackage != null) {
@@ -213,7 +270,10 @@ class AaVirtualDisplayAdapter(
     }
 
     fun onReconnected(width: Int, height: Int, densityDpi: Int){
-        mVirtualDisplay.resize(width, height, densityDpi)
+        // 外接模式下屏归 App，尺寸/生命周期由 App 自己管理。
+        if (!mExternalOwned) {
+            mVirtualDisplay.resize(width, height, densityDpi)
+        }
         mDensityDpi = densityDpi
         refreshLauncherPackage("reconnect")
         trackPackage(mLauncherPackage, 0)
@@ -226,7 +286,7 @@ class AaVirtualDisplayAdapter(
             return
         }
         mIsDestroying = true
-        if (!::mVirtualDisplay.isInitialized) {
+        if (!mExternalOwned && !::mVirtualDisplay.isInitialized) {
             log(TAG, "onDestroy ignored: virtual display was never initialized")
             tryOrNull { CoreManagerService.systemContext.unbindService(mServiceConnection) }
             mShellManager = null
@@ -236,6 +296,10 @@ class AaVirtualDisplayAdapter(
         trackPackage(mHomePackage, 0)
         val protectedPackages = linkedSetOf<String>().apply {
             add(BuildConfig.APPLICATION_ID)
+            // Android Auto 宿主：AAP 路线下它只是碰巧把任务带到过虚拟屏（例如车机服务器
+            // 开着时的 CarVirtualDeviceActivity），收尾时 force-stop 会把用户的车机服务/
+            // 蓝牙连接一起带走。原版路线同理，绝不能由投屏收尾去杀 gearhead。
+            add("com.google.android.projection.gearhead")
             mLauncherPackage?.trim()?.takeIf { it.isNotEmpty() }?.let { add(it) }
             mHomePackage?.trim()?.takeIf { it.isNotEmpty() }?.let { add(it) }
             addAll(getForegroundPackagesOnDisplay(Display.DEFAULT_DISPLAY))
@@ -272,31 +336,41 @@ class AaVirtualDisplayAdapter(
         }
         mSurfaceControls.values.forEach { it.release() }
         mSurfaceControls.clear()
-        tryOrNull { mDisplayWindowManager.removeView(mForceView) }
-        try {
-            mVirtualDisplay.release()
-            log(TAG, "virtual display released")
-        } catch (e: Throwable) {
-            log(TAG, "virtual display release failed", e)
+        if (mExternalOwned) {
+            // 外接模式下虚拟屏归 App：surface 摘除与 release 都由 App 自己做。
+            log(TAG, "external virtual display detached (release owned by app): id=$mDisplayId")
+        } else {
+            tryOrNull { mDisplayWindowManager.removeView(mForceView) }
+            try {
+                mVirtualDisplay.release()
+                log(TAG, "virtual display released")
+            } catch (e: Throwable) {
+                log(TAG, "virtual display release failed", e)
+            }
         }
         mDisplayId = Display.INVALID_DISPLAY
         mDensityDpi = 0
 
         // The configured teardown commands are explicitly post-release. Keep the service bound
         // until its Binder call finishes so a valid connected session cannot be silently skipped.
-        try {
-            val shellManager = mShellManager
-            if (shellManager == null) {
-                log(TAG, "onDestroy destroyVirtualDisplayAfter skipped: ShellManagerService unavailable")
-            } else {
-                val succeeded = shellManager.destroyVirtualDisplayAfter()
-                log(TAG, "onDestroy destroyVirtualDisplayAfter: success=$succeeded")
-            }
-        } catch (e: Throwable) {
-            log(TAG, "onDestroy destroyVirtualDisplayAfter failed", e)
-        } finally {
-            mShellManager = null
+        val shellManager = mShellManager
+        mShellManager = null
+        if (shellManager == null) {
+            log(TAG, "onDestroy destroyVirtualDisplayAfter skipped: ShellManagerService unavailable")
             tryOrNull { CoreManagerService.systemContext.unbindService(mServiceConnection) }
+        } else {
+            // 同上：这条 Binder 调用也在跑 root 命令，不能占 system_server 主线程。
+            // 解绑放到命令结束之后，保证调用期间服务仍然连着。
+            runIO {
+                try {
+                    val succeeded = shellManager.destroyVirtualDisplayAfter()
+                    log(TAG, "onDestroy destroyVirtualDisplayAfter: success=$succeeded")
+                } catch (e: Throwable) {
+                    log(TAG, "onDestroy destroyVirtualDisplayAfter failed", e)
+                } finally {
+                    tryOrNull { CoreManagerService.systemContext.unbindService(mServiceConnection) }
+                }
+            }
         }
     }
 
@@ -364,6 +438,8 @@ class AaVirtualDisplayAdapter(
                 .apply()
         } catch (e: Throwable){
             log(TAG, "addMirror show error:", e)
+            // reparent/show 失败时 SurfaceControl 必须释放，否则每次镜像都会泄漏一个图层。
+            runCatching { sc.release() }
             return
         }
         mSurfaceControls.put(surfaceControl, sc)?.release()
@@ -777,7 +853,13 @@ class AaVirtualDisplayAdapter(
                         Instances.iActivityTaskManager.getTaskSnapshot(taskInfo.taskId, true)
                     }?.let { taskSnapshot ->
                         taskSnapshot.hardwareBuffer?.let { buffer ->
-                            Bitmap.wrapHardwareBuffer(buffer, taskSnapshot.colorSpace)
+                            try {
+                                // Bitmap 会持有自己的引用；HardwareBuffer 必须由调用方关闭，
+                                // 否则每次打开最近任务都会泄漏一张全尺寸图形 buffer。
+                                Bitmap.wrapHardwareBuffer(buffer, taskSnapshot.colorSpace)
+                            } finally {
+                                buffer.close()
+                            }
                         }
                     }
                 }.let { result ->
@@ -830,7 +912,7 @@ class AaVirtualDisplayAdapter(
          * If the removed task is the Home package, restart it
          */
         override fun onTaskRemoved(taskId: Int) {
-            if(mIsDestroying) {
+            if(mIsDestroying || mSessionEnded) {
                 if(mHomeTaskId == taskId) {
                     mHomeTaskId = null
                 } else if(mLauncherPackageTaskId == taskId) {

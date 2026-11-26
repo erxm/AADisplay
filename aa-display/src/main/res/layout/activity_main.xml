@@ -67,13 +67,13 @@
             </RelativeLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- 设备信息 -->
+        <!-- 投屏路线：核心选择，放在最靠前，切换立即生效 -->
         <com.google.android.material.textview.MaterialTextView
             style="@style/Miuix.GroupTitle"
-            android:text="@string/section_device_info" />
+            android:text="@string/section_projection_route" />
 
         <com.google.android.material.card.MaterialCardView
-            android:id="@+id/mcv_info"
+            android:id="@+id/mcv_route"
             style="@style/Miuix.Card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content">
@@ -81,55 +81,121 @@
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical">
+                android:orientation="vertical"
+                android:paddingHorizontal="18dp"
+                android:paddingVertical="14dp">
 
-                <RelativeLayout
+                <com.google.android.material.button.MaterialButtonToggleGroup
+                    android:id="@+id/toggle_route"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:paddingHorizontal="18dp"
-                    android:paddingVertical="15dp">
+                    app:selectionRequired="true"
+                    app:singleSelection="true">
 
-                    <com.google.android.material.textview.MaterialTextView
-                        style="@style/Miuix.ItemTitle"
-                        android:layout_width="wrap_content"
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_route_legacy"
+                        style="?attr/materialButtonOutlinedStyle"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_centerVertical="true"
-                        android:text="@string/info_root_privilege" />
+                        android:layout_weight="1"
+                        android:text="@string/route_legacy" />
 
-                    <com.google.android.material.textview.MaterialTextView
-                        android:id="@+id/root_privilege"
-                        style="@style/Miuix.ItemValue"
-                        android:layout_width="wrap_content"
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_route_aap"
+                        style="?attr/materialButtonOutlinedStyle"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_alignParentEnd="true"
-                        android:layout_centerVertical="true"
-                        tools:text="已获取" />
-                </RelativeLayout>
+                        android:layout_weight="1"
+                        android:text="@string/route_aap" />
+                </com.google.android.material.button.MaterialButtonToggleGroup>
 
-                <View style="@style/Miuix.Divider" />
-
-                <RelativeLayout
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/tv_route_hint"
+                    style="@style/Miuix.ItemSummary"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:paddingHorizontal="18dp"
-                    android:paddingVertical="15dp">
+                    android:layout_marginTop="10dp"
+                    tools:text="不依赖 Android Auto，直接通过 AAP 协议连接车机" />
+
+                <!-- AAP 专属控制区：仅 AAP 路线可见 -->
+                <LinearLayout
+                    android:id="@+id/ll_aap_controls"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:orientation="vertical"
+                    android:visibility="gone"
+                    tools:visibility="visible">
+
+                    <View style="@style/Miuix.Divider" />
+
+                    <RelativeLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingTop="12dp"
+                        android:paddingBottom="4dp">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_centerVertical="true"
+                            android:layout_toStartOf="@id/switch_aap_auto"
+                            android:orientation="vertical"
+                            android:paddingEnd="12dp">
+
+                            <com.google.android.material.textview.MaterialTextView
+                                style="@style/Miuix.ItemTitle"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="@string/aap_auto_connect" />
+
+                            <com.google.android.material.textview.MaterialTextView
+                                style="@style/Miuix.ItemSummary"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="@string/pref_aap_enabled_summary" />
+                        </LinearLayout>
+
+                        <com.google.android.material.materialswitch.MaterialSwitch
+                            android:id="@+id/switch_aap_auto"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_alignParentEnd="true"
+                            android:layout_centerVertical="true" />
+                    </RelativeLayout>
 
                     <com.google.android.material.textview.MaterialTextView
-                        style="@style/Miuix.ItemTitle"
-                        android:layout_width="wrap_content"
+                        android:id="@+id/tv_aap_status"
+                        style="@style/Miuix.ItemSummary"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_centerVertical="true"
-                        android:text="@string/info_system_version" />
+                        android:layout_marginTop="2dp"
+                        tools:text="AAP：未连接" />
 
-                    <com.google.android.material.textview.MaterialTextView
-                        android:id="@+id/system_version"
-                        style="@style/Miuix.ItemValue"
-                        android:layout_width="wrap_content"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_alignParentEnd="true"
-                        android:layout_centerVertical="true"
-                        tools:text="15 (API 35)" />
-                </RelativeLayout>
+                        android:layout_marginTop="10dp"
+                        android:orientation="horizontal">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btn_aap_connect"
+                            style="@style/Miuix.Button"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/aap_connect" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btn_aap_stop"
+                            style="@style/Miuix.Button"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="10dp"
+                            android:layout_weight="1"
+                            android:text="@string/aap_stop" />
+                    </LinearLayout>
+                </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -257,6 +323,72 @@
                         android:layout_marginTop="18dp"
                         android:text="@string/save_settings" />
                 </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 设备信息（诊断项放最后） -->
+        <com.google.android.material.textview.MaterialTextView
+            style="@style/Miuix.GroupTitle"
+            android:text="@string/section_device_info" />
+
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/mcv_info"
+            style="@style/Miuix.Card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <RelativeLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingHorizontal="18dp"
+                    android:paddingVertical="15dp">
+
+                    <com.google.android.material.textview.MaterialTextView
+                        style="@style/Miuix.ItemTitle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_centerVertical="true"
+                        android:text="@string/info_root_privilege" />
+
+                    <com.google.android.material.textview.MaterialTextView
+                        android:id="@+id/root_privilege"
+                        style="@style/Miuix.ItemValue"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_alignParentEnd="true"
+                        android:layout_centerVertical="true"
+                        tools:text="已获取" />
+                </RelativeLayout>
+
+                <View style="@style/Miuix.Divider" />
+
+                <RelativeLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingHorizontal="18dp"
+                    android:paddingVertical="15dp">
+
+                    <com.google.android.material.textview.MaterialTextView
+                        style="@style/Miuix.ItemTitle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_centerVertical="true"
+                        android:text="@string/info_system_version" />
+
+                    <com.google.android.material.textview.MaterialTextView
+                        android:id="@+id/system_version"
+                        style="@style/Miuix.ItemValue"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_alignParentEnd="true"
+                        android:layout_centerVertical="true"
+                        tools:text="15 (API 35)" />
+                </RelativeLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

@@ -77,7 +77,10 @@ object CoolwalkRailCoordinator {
      */
     fun maybeBeginReconnectIfNeeded(
         reason: String,
-        sessionGapMs: Long = Long.MAX_VALUE,
+        // 默认按“同一连接内”处理（gap=0）。用 Long.MAX_VALUE 会让下面所有
+        // sessionGapMs <= PROJECTION_SESSION_GAP_MS 的早退条件恒为 false，
+        // 每次 LayoutInfo 重发布都会被误判成重连并清空快照。
+        sessionGapMs: Long = 0L,
     ): Boolean {
         val snap = snapshot
         if (snap.fullHuWidthPx <= 0 && snap.phase == RailPhase.Bootstrapping) return false

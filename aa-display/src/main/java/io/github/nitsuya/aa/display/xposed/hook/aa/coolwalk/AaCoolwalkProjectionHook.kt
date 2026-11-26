@@ -2,6 +2,7 @@ package io.github.nitsuya.aa.display.xposed.hook.aa.coolwalk
 
 import android.content.Intent
 import android.graphics.Rect
+import android.os.Build
 import android.os.Bundle
 import android.os.Parcelable
 import com.github.kyuubiran.ezxhelper.init.InitFields
@@ -412,6 +413,12 @@ object AaCoolwalkProjectionHook {
     }
 
     private fun bundleParcelableRect(bundle: Bundle, key: String): Rect? {
-        return bundle.getParcelable(key, Rect::class.java)
+        // 两参 getParcelable 是 API 33 才有的；minSdk 31/32 上会 NoSuchMethodError。
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            bundle.getParcelable(key, Rect::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            bundle.getParcelable(key) as? Rect
+        }
     }
 }

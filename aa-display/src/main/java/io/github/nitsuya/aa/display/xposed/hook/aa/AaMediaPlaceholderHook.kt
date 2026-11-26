@@ -69,7 +69,6 @@ object AaMediaPlaceholderHook : AaHook() {
         ).flatMap { needle ->
             runCatching {
                 bridge.findMethod {
-                    searchPackages = listOf("")
                     matcher { usingStrings(needle) }
                 }.mapNotNull { md ->
                     runCatching { md.getMethodInstance(target.classLoader) }.getOrNull()

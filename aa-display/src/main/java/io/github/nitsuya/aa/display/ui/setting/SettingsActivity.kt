@@ -15,6 +15,7 @@ import io.github.nitsuya.aa.display.R
 import io.github.nitsuya.aa.display.databinding.ActivitySettingsBinding
 import io.github.nitsuya.aa.display.util.AADisplayConfig
 import io.github.nitsuya.aa.display.util.GoogleMapsOnAaManager
+import io.github.nitsuya.aa.display.util.HeadUnitServerController
 import io.github.nitsuya.aa.display.util.SharedPreferencesAccess
 import io.github.nitsuya.aa.display.util.WazeOnAaManager
 
@@ -49,6 +50,31 @@ class SettingsActivity : BaseActivity<ActivitySettingsBinding>(ActivitySettingsB
             }
             setPreferencesFromResource(R.xml.pref_aadisplay_config, rootKey)
             bindAppProjectionSwitches()
+            bindHeadUnitServerActions()
+        }
+
+        /**
+         * 车机服务器是纯动作项（不落盘）：点击后由 [HeadUnitServerController]
+         * 通过 gearhead 进程内的 hook 启动/停止 AA 的 5277 服务。
+         */
+        private fun bindHeadUnitServerActions() {
+            bindHeadUnitAction("HeadUnitServerStart", stop = false)
+            bindHeadUnitAction("HeadUnitServerStop", stop = true)
+        }
+
+        private fun bindHeadUnitAction(key: String, stop: Boolean) {
+            val preference = findPreference<Preference>(key) ?: return
+            preference.setOnPreferenceClickListener {
+                val ctx = context ?: return@setOnPreferenceClickListener false
+                HeadUnitServerController.request(ctx, stop) { message ->
+                    if (isAdded) {
+                        runCatching {
+                            Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+                true
+            }
         }
 
         /**
@@ -74,14 +100,25 @@ class SettingsActivity : BaseActivity<ActivitySettingsBinding>(ActivitySettingsB
             apply: (Boolean) -> Boolean
         ) {
             val preference = findPreference<Preference>(key) ?: return
-            preference.setOnPreferenceChangeListener { _, newValue ->
+            preference.setOnPreferenceChangeListener { pref, newValue ->
                 val enabled = newValue as? Boolean ?: return@setOnPreferenceChangeListener false
-                if (apply(enabled)) {
-                    true
-                } else {
-                    Toast.makeText(requireContext(), getString(failedMessage), Toast.LENGTH_SHORT).show()
-                    false
+                val ctx = context ?: return@setOnPreferenceChangeListener false
+                // root shell 是阻塞操作（最多 8 条命令），绝不能跑在 UI 线程上。
+                // 先让开关落盘，失败后再回滚 UI 与配置。
+                io.github.nitsuya.template.bases.runIO {
+                    val ok = runCatching { apply(enabled) }.getOrDefault(false)
+                    if (!ok) {
+                        io.github.nitsuya.template.bases.runMain {
+                            (pref as? androidx.preference.TwoStatePreference)?.let {
+                                it.isChecked = !enabled
+                            }
+                            runCatching {
+                                Toast.makeText(ctx, ctx.getString(failedMessage), Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
                 }
+                true
             }
         }
 

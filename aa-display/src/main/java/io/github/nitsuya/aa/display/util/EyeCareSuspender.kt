@@ -44,6 +44,13 @@ object EyeCareSuspender {
     /** 模块自有键：挂起时刻的 uptime，用于跨开机残留识别。 */
     const val SETTINGS_SUSPEND_UPTIME_MS = "aadisplay_eyecare_suspend_uptime_ms"
 
+    /**
+     * 模块自有键：挂起时刻的 [Settings.Global.BOOT_COUNT]。
+     * uptime 比较不可靠：框架软重启不会归零，整机重启时若 saved 很小也可能漏判；
+     * boot count 变了就一定是新的一次开机。
+     */
+    const val SETTINGS_SUSPEND_BOOT_COUNT = "aadisplay_eyecare_suspend_boot_count"
+
     private const val NONE = -1
 
     private val mHandler = Handler(Looper.getMainLooper())
@@ -82,17 +89,27 @@ object EyeCareSuspender {
      * 存的 uptime 比现在大，就一定来自上一次开机
      * （与 [CoolwalkRailStore.isCrossBootStale] 同一判据）。
      */
+    private fun currentBootCount(cr: ContentResolver): Int =
+        runCatching { Settings.Global.getInt(cr, Settings.Global.BOOT_COUNT, -1) }.getOrDefault(-1)
+
     private fun isCrossBootStale(cr: ContentResolver): Boolean {
         val saved = runCatching {
             Settings.Global.getLong(cr, SETTINGS_SUSPEND_UPTIME_MS, 0L)
         }.getOrDefault(0L)
-        return saved > SystemClock.uptimeMillis()
+        if (saved > SystemClock.uptimeMillis()) return true
+        // boot count 变了就是新的一次开机，不能只看 uptime。
+        val savedBoot = runCatching {
+            Settings.Global.getInt(cr, SETTINGS_SUSPEND_BOOT_COUNT, -1)
+        }.getOrDefault(-1)
+        val currentBoot = currentBootCount(cr)
+        return savedBoot >= 0 && currentBoot >= 0 && savedBoot != currentBoot
     }
 
     private fun writeSaved(cr: ContentResolver, value: Int) {
         runCatching {
             Settings.Global.putInt(cr, SETTINGS_SAVED_PAPER_MODE, value)
             Settings.Global.putLong(cr, SETTINGS_SUSPEND_UPTIME_MS, SystemClock.uptimeMillis())
+            Settings.Global.putInt(cr, SETTINGS_SUSPEND_BOOT_COUNT, currentBootCount(cr))
         }
     }
 
@@ -100,6 +117,7 @@ object EyeCareSuspender {
         runCatching {
             Settings.Global.putInt(cr, SETTINGS_SAVED_PAPER_MODE, NONE)
             Settings.Global.putLong(cr, SETTINGS_SUSPEND_UPTIME_MS, 0L)
+            Settings.Global.putInt(cr, SETTINGS_SUSPEND_BOOT_COUNT, -1)
         }
     }
 

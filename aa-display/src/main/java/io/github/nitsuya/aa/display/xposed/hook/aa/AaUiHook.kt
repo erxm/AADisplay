@@ -114,11 +114,9 @@ object AaUiHook: AaHook() {
 
         env.contentBoundsMethods = try {
             val byKey = bridge.findMethod {
-                searchPackages = listOf("")
                 matcher { usingStrings("content_bounds") }
             }
             val byLog = bridge.findMethod {
-                searchPackages = listOf("")
                 matcher {
                     usingStrings {
                         add("onProjectionStart updated config", StringMatchType.StartsWith, false)
@@ -142,11 +140,9 @@ object AaUiHook: AaHook() {
 
         env.facetBarSurfaceMethods = try {
             val byWidth = bridge.findMethod {
-                searchPackages = listOf("")
                 matcher { usingStrings("onWindowSurfaceAvailable width:") }
             }
             val byDims = bridge.findMethod {
-                searchPackages = listOf("")
                 matcher { usingStrings("onWindowSurfaceAvailable dimensions:") }
             }
             (byWidth + byDims).mapNotNull { md ->
@@ -166,7 +162,6 @@ object AaUiHook: AaHook() {
 
         env.projectionBoundsClassName = try {
             bridge.findClass {
-                searchPackages = listOf("")
                 matcher { usingStrings("{blX=") }
             }.mapNotNull { runCatching { it.name }.getOrNull() }
                 .firstOrNull()
@@ -190,7 +185,6 @@ object AaUiHook: AaHook() {
         }
 
         val classes = bridge.findClass {
-            searchPackages = listOf("")
             matcher {
                 usingStrings {
                     add("LayoutInfo{layoutResourceId=", StringMatchType.StartsWith, false)
@@ -220,7 +214,6 @@ object AaUiHook: AaHook() {
     private fun resolveProjectionLauncher(bridge: DexKitBridge, target: HookTarget) {
         val hits = try {
             bridge.findMethod {
-                searchPackages = listOf("")
                 matcher {
                     usingStrings {
                         add(
@@ -298,7 +291,6 @@ object AaUiHook: AaHook() {
 
     private fun loadDexClassLegacy(bridge: DexKitBridge) {
         val classes = bridge.findClass {
-            searchPackages = listOf("")
             matcher {
                 usingStrings {
                     add(
@@ -317,7 +309,8 @@ object AaUiHook: AaHook() {
         try{
             startMethod = loadClass("com.google.android.projection.gearhead.service.CarSystemUiControllerService").staticMethod("a", null, argTypes(Intent::class.java))
         } catch (e: Throwable){
-            log(tagName,  "AaUiHook: not found CarSystemUiControllerService.a static method", e)
+            // 17.8+ 已删除该类，走 CoolwalkHookEnv 的新入口；这里只是兼容旧版，不需要堆栈。
+            logDebug(tagName, "AaUiHook: CarSystemUiControllerService.a unavailable (AA 17.8+)")
         }
 
         resLayoutGhFacetBarId = InitFields.appContext.resources.getIdentifier("gh_coolwalk_vertical_facet_bar", "layout", InitFields.appContext.packageName)
@@ -393,21 +386,10 @@ object AaUiHook: AaHook() {
     }
 
     private fun resolveLayoutInfoConstructor(className: String): Constructor<*> {
-        // Keep only stable shape checks so this works across AA 16.4 and 16.6+.
+        // 形状判断与 Coolwalk 路径共用：AA 18.1 在布局类型对象参数前多了一个 boolean。
         val clazz = loadClass(className)
         val fallback = clazz.declaredConstructors.firstOrNull { ctor ->
-            val p = ctor.parameterTypes
-            p.size >= 10
-                && p[0] == Int::class.javaPrimitiveType
-                && p[1] == Int::class.javaPrimitiveType
-                && p[2] == Int::class.javaPrimitiveType
-                && p[4] == Boolean::class.javaPrimitiveType
-                && p[5] == Boolean::class.javaPrimitiveType
-                && p[7] == Boolean::class.javaPrimitiveType
-                && p[8] == Boolean::class.javaPrimitiveType
-                && p[9] == Boolean::class.javaPrimitiveType
-                && !p[6].isPrimitive
-                && (p[3] == Int::class.javaPrimitiveType || p[3].isEnum)
+            CoolwalkHookEnv.isLayoutInfoConstructor(ctor.parameterTypes)
         } ?: throw NoSuchMethodException("AaUiHook: not found compatible LayoutInfo constructor for $className")
 
         fallback.isAccessible = true
@@ -461,9 +443,11 @@ object AaUiHook: AaHook() {
                 removeView(resultViewGroup)
             }
             if(closeLauncherDashboard){
-                resultViewGroup.findViewById<View>(resIdLauncherAndDashboardIconId).apply {
-                    setOnClickFinallyListener {
-                        performLongClick()
+                // 该 id 只在部分布局里存在；findViewById 返回 null 时不能 NPE，
+                // 否则会在 gearhead 主线程的布局 inflate 里直接崩掉。
+                resultViewGroup.findViewById<View>(resIdLauncherAndDashboardIconId)?.let { icon ->
+                    icon.setOnClickFinallyListener {
+                        icon.performLongClick()
                     }
                 }
             }

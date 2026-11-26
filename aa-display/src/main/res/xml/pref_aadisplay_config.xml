@@ -82,6 +82,31 @@
 
     </PreferenceCategory>
 
+    <!-- ============ 交互 ============ -->
+    <PreferenceCategory
+        app:key="CategoryInteract"
+        app:title="@string/pref_category_interact"
+        app:iconSpaceReserved="false">
+
+        <EditTextPreference
+            android:inputType="text"
+            app:singleLineTitle="true"
+            app:key="VoiceAssistShell"
+            app:defaultValue="am start com.miui.voiceassist/com.xiaomi.voiceassistant.CTAAlertActivity"
+            app:title="@string/pref_voice_assist_shell_title"
+            app:dialogMessage="@string/pref_voice_assist_shell_summary"
+            app:useSimpleSummaryProvider="true"
+            app:iconSpaceReserved="false" />
+
+        <rikka.material.preference.MaterialSwitchPreference
+            app:key="ScreenOffReplaceLockScreen"
+            app:defaultValue="false"
+            app:title="@string/pref_screen_off_replace_lock_title"
+            app:summary="@string/pref_screen_off_replace_lock_summary"
+            app:iconSpaceReserved="false" />
+
+    </PreferenceCategory>
+
     <!-- ============ 兼容性修复 ============ -->
     <PreferenceCategory
         app:key="CategoryFix"
@@ -114,31 +139,6 @@
 
     </PreferenceCategory>
 
-    <!-- ============ 交互 ============ -->
-    <PreferenceCategory
-        app:key="CategoryInteract"
-        app:title="@string/pref_category_interact"
-        app:iconSpaceReserved="false">
-
-        <EditTextPreference
-            android:inputType="text"
-            app:singleLineTitle="true"
-            app:key="VoiceAssistShell"
-            app:defaultValue="am start com.miui.voiceassist/com.xiaomi.voiceassistant.CTAAlertActivity"
-            app:title="@string/pref_voice_assist_shell_title"
-            app:dialogMessage="@string/pref_voice_assist_shell_summary"
-            app:useSimpleSummaryProvider="true"
-            app:iconSpaceReserved="false" />
-
-        <rikka.material.preference.MaterialSwitchPreference
-            app:key="ScreenOffReplaceLockScreen"
-            app:defaultValue="false"
-            app:title="@string/pref_screen_off_replace_lock_title"
-            app:summary="@string/pref_screen_off_replace_lock_summary"
-            app:iconSpaceReserved="false" />
-
-    </PreferenceCategory>
-
     <!-- ============ Shell 命令（nitsuya 分支的启动/退出脚本）============ -->
     <PreferenceCategory
         app:key="CategoryShell"
@@ -159,6 +159,29 @@
             app:title="@string/pref_destroy_after_title"
             app:dialogMessage="@string/pref_destroy_after_summary"
             app:useSimpleSummaryProvider="true"
+            app:iconSpaceReserved="false" />
+
+    </PreferenceCategory>
+
+    <!-- ============ 车机服务器 ============ -->
+    <!-- 纯动作项，不落盘。实际启停由 HeadUnitServerController 通过 gearhead 进程内的
+         HeadUnitServerBridge（广播）或 root shell 完成。 -->
+    <PreferenceCategory
+        app:key="CategoryHeadUnit"
+        app:title="@string/pref_category_head_unit"
+        app:iconSpaceReserved="false">
+
+        <Preference
+            app:key="HeadUnitServerStart"
+            app:persistent="false"
+            app:title="@string/head_unit_start"
+            app:summary="@string/head_unit_server_summary"
+            app:iconSpaceReserved="false" />
+
+        <Preference
+            app:key="HeadUnitServerStop"
+            app:persistent="false"
+            app:title="@string/head_unit_stop"
             app:iconSpaceReserved="false" />
 
     </PreferenceCategory>

@@ -60,6 +60,15 @@ sealed class AADisplayConfig<T>(val key: String) {
     object ComGoogleAndroidGmsCarProps: PropertiesConfig("ComGoogleAndroidGmsCarProps")
     object ComGoogleAndroidProjectionGearheadProps: PropertiesConfig("ComGoogleAndroidProjectionGearheadProps")
 
+    // ---- AAP 路线（不依赖 Android Auto 的原生 AAP 通道）----
+    // "legacy"：原版路线，hook gearhead 走 AA（默认，保持既有行为）；
+    // "aap"   ：自研 AAP 协议栈直连车机/DHU，不经过 gearhead。
+    object AapRoute: StringConfig("AapRoute", "legacy")
+    // AAP 路线总开关：关掉后前台服务不自动连接 USB 车机，也不重连。
+    object AapEnabled: BooleanConfig("AapEnabled", true)
+    // TCP/localabstract 调试入口的监听端口（仅 debug 构建生效）。
+    object AapTcpPort: IntConfig("AapTcpPort", 5277)
+
 
     abstract class StringConfig(key: String, private val defValue: String? = null): AADisplayConfig<String?>(key){
         override fun get(config: SharedPreferences?): String? = config?.getString(key, defValue)?.trim()?.let {
@@ -86,9 +95,13 @@ sealed class AADisplayConfig<T>(val key: String) {
     abstract class PropertiesConfig(key: String): AADisplayConfig<Properties?>(key){
         override fun get(config: SharedPreferences?): Properties?{
             return config?.getString(key, null)?.let {
-                Properties().apply {
-                    load(StringReader(it))
-                }
+                // 用户输入的畸形转义（如 "\u12"）会让 Properties.load 抛
+                // IllegalArgumentException；失败时退回“未配置”，不能中断 props hook。
+                runCatching {
+                    Properties().apply {
+                        load(StringReader(it))
+                    }
+                }.getOrNull()
             } ?: null
         }
     }

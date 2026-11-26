@@ -32,7 +32,9 @@ object CoolwalkRailMath {
 
     fun railPxRange(fullW: Int): IntRange {
         if (fullW <= 0) return absoluteFacetRailBand()
-        val max = (fullW * 0.25f).roundToInt().coerceAtLeast(120).coerceAtMost(fullW / 2)
+        // 上界不能再低于下界，否则会得到空区间，coerceIn 直接抛 IllegalArgumentException。
+        val upper = (fullW / 2).coerceAtLeast(FACET_RAIL_ABS_MIN)
+        val max = (fullW * 0.25f).roundToInt().coerceAtLeast(120).coerceAtMost(upper)
         return FACET_RAIL_ABS_MIN..max
     }
 
@@ -73,7 +75,9 @@ object CoolwalkRailMath {
         if (gap !in absoluteFacetRailBand()) return false
         if (observedRailWidthPx > 1) {
             val jitter = maxOf(RAIL_MEASUREMENT_JITTER_PX, observedRailWidthPx / 5)
-            if (abs(gap - observedRailWidthPx) <= jitter) return true
+            // 已知单轨宽度时只接受与单轨接近的 gap。不能落回下面的兜底：
+            // 否则 2×rail 也会通过，正是注释里要拒绝的 720→880 inflation。
+            return abs(gap - observedRailWidthPx) <= jitter
         }
         // Single rail only — reject 2×rail (720+80+80) via ~15% HU cap, absolute max 160px.
         val maxSingle = minOf(

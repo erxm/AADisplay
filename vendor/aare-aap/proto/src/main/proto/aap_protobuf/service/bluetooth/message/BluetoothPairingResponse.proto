@@ -1,0 +1,11 @@
+syntax="proto2";
+
+import "aap_protobuf/shared/MessageStatus.proto";
+
+package aap_protobuf.service.bluetooth.message;
+
+message BluetoothPairingResponse
+{
+    optional shared.MessageStatus status = 1 [default = STATUS_SUCCESS];
+    optional bool already_paired = 2;
+}

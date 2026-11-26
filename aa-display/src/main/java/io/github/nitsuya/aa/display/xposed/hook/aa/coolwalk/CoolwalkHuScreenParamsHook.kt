@@ -116,7 +116,6 @@ object CoolwalkHuScreenParamsHook {
         if (showMethods.isEmpty()) {
             showMethods = runCatching {
                 bridge.findMethod {
-                    searchPackages = listOf("")
                     matcher { usingStrings { add(SHOW_MARKER, StringMatchType.Contains, false) } }
                 }.mapNotNull { md ->
                     runCatching { md.getMethodInstance(target.classLoader) }.getOrNull()
@@ -136,7 +135,6 @@ object CoolwalkHuScreenParamsHook {
 
     private fun findClassNames(bridge: DexKitBridge, marker: String): List<String> =
         bridge.findClass {
-            searchPackages = listOf("")
             matcher { usingStrings { add(marker, StringMatchType.Contains, false) } }
         }.mapNotNull { runCatching { it.name }.getOrNull() }
 

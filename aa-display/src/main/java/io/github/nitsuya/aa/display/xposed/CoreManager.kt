@@ -12,6 +12,7 @@ import android.view.SurfaceControl
 import io.github.nitsuya.aa.display.model.RecentTask
 import io.github.nitsuya.template.bases.runIO
 import java.lang.reflect.InvocationHandler
+import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
 import java.lang.reflect.Proxy
 
@@ -20,10 +21,35 @@ object CoreManager : ICoreManager, DeathRecipient {
 
     private class ServiceProxy(private val obj: ICoreManager) : InvocationHandler {
         override fun invoke(proxy: Any?, method: Method, args: Array<out Any?>?): Any? {
-            val result = method.invoke(obj, *args.orEmpty())
-            if (result == null) Log.i(TAG, "Call service method ${method.name}")
-            else Log.i(TAG, "Call service method ${method.name} with result " + result.toString().take(20))
-            return result
+            return try {
+                val result = method.invoke(obj, *args.orEmpty())
+                // touch 是每帧调用的热路径，逐条日志会造成 log storm 并拖慢输入。
+                if (method.name != "touch") {
+                    Log.i(TAG, "Call service method ${method.name}")
+                }
+                result
+            } catch (e: Throwable) {
+                val cause = (e as? InvocationTargetException)?.targetException ?: e
+                if (cause is android.os.DeadObjectException || cause is android.os.RemoteException) {
+                    // 服务端已死：清缓存，下一次调用重新取 binder。
+                    service = null
+                    serviceMissUptimeMs = 0L
+                }
+                Log.w(TAG, "service call ${method.name} failed", cause)
+                defaultValue(method.returnType)
+            }
+        }
+
+        /** 远端失败时不要抛进调用方（可能在 hook / UI 主线程），按返回类型给安全默认值。 */
+        private fun defaultValue(type: Class<*>): Any? = when (type) {
+            Void.TYPE, Void::class.java -> null
+            java.lang.Boolean.TYPE, java.lang.Boolean::class.java -> false
+            java.lang.Integer.TYPE, java.lang.Integer::class.java -> 0
+            java.lang.Long.TYPE, java.lang.Long::class.java -> 0L
+            java.lang.Float.TYPE, java.lang.Float::class.java -> 0f
+            java.lang.Double.TYPE, java.lang.Double::class.java -> 0.0
+            IntArray::class.java -> intArrayOf()
+            else -> null
         }
     }
 
@@ -64,6 +90,22 @@ object CoreManager : ICoreManager, DeathRecipient {
         }
         Log.i(TAG, "onCreateDisplay: ${with}x$height,$densityDpi surface=${surface != null}")
         remote.onCreateDisplay(with, height, densityDpi, surface, listener)
+    }
+
+    override fun onExternalDisplayAttached(
+        displayId: Int,
+        width: Int,
+        height: Int,
+        densityDpi: Int,
+        listener: IVirtualDisplayCreatedListener,
+    ) {
+        val remote = getService()
+        if (remote == null) {
+            Log.e(TAG, "onExternalDisplayAttached skipped; service unavailable: id=$displayId ${width}x$height,$densityDpi")
+            return
+        }
+        Log.i(TAG, "onExternalDisplayAttached: id=$displayId ${width}x$height,$densityDpi")
+        remote.onExternalDisplayAttached(displayId, width, height, densityDpi, listener)
     }
 
     override fun setDisplaySurface(surface: Surface?) {
@@ -245,6 +287,11 @@ object CoreManager : ICoreManager, DeathRecipient {
         val lastMiss = serviceMissUptimeMs
         if (lastMiss != 0L && now - lastMiss in 0 until SERVICE_MISS_BACKOFF_MS) return null
         val pm = ServiceManager.getService("package")
+        if (pm == null) {
+            Log.d(TAG, "package service unavailable")
+            serviceMissUptimeMs = now
+            return null
+        }
         val data = Parcel.obtain()
         val reply = Parcel.obtain()
         val remote = try {
@@ -254,8 +301,8 @@ object CoreManager : ICoreManager, DeathRecipient {
             reply.readException()
             val binder = reply.readStrongBinder()
             ICoreManager.Stub.asInterface(binder)
-        } catch (e: RemoteException) {
-            Log.d(TAG, "Failed to get binder")
+        } catch (e: Throwable) {
+            Log.d(TAG, "Failed to get binder: $e")
             null
         } finally {
             data.recycle()
@@ -264,7 +311,9 @@ object CoreManager : ICoreManager, DeathRecipient {
         if (remote != null) {
             Log.i(TAG, "Binder acquired")
             serviceMissUptimeMs = 0L
-            remote.asBinder().linkToDeath(this, 0)
+            // binder 可能在拿到后立刻死亡，linkToDeath 自身也会抛 DeadObjectException。
+            runCatching { remote.asBinder().linkToDeath(this, 0) }
+                .onFailure { Log.w(TAG, "linkToDeath failed", it) }
             service = Proxy.newProxyInstance(
                 javaClass.classLoader,
                 arrayOf(ICoreManager::class.java),

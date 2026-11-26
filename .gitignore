@@ -20,3 +20,7 @@ key.jks
 # Kotlin/Gradle 本地缓存，不入库
 .kotlin/
 .gradle-user/
+
+# vendored modules build outputs
+/vendor/**/build/
+/vendor/**/.gradle/

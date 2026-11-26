@@ -23,6 +23,15 @@
     <string name="info_yes">已获取</string>
     <string name="info_no">未获取</string>
 
+    <!-- 车机服务器（高级设置页） -->
+    <string name="pref_category_head_unit">车机服务器</string>
+    <string name="head_unit_server_summary">直接启动 Android Auto 的车机服务器（监听 5277），不用再进 AA 开发者选项</string>
+    <string name="head_unit_start">启动车机服务器</string>
+    <string name="head_unit_stop">停止车机服务器</string>
+    <string name="head_unit_started">车机服务器已启动</string>
+    <string name="head_unit_stopped">车机服务器已停止</string>
+    <string name="head_unit_failed">操作失败，请确认 Root 权限已授予：%1$s</string>
+
     <!-- 常用设置 -->
     <string name="section_common_settings">常用设置</string>
     <string name="more_settings_title">高级设置</string>
@@ -104,4 +113,35 @@
     <string name="pref_gearhead_props_title">gearhead 属性覆盖</string>
     <string name="pref_gms_car_props_title">gms.car 属性覆盖</string>
     <string name="pref_props_summary">key=value，每行一条</string>
+
+    <!-- AAP（不依赖 Android Auto 的投屏路线） -->
+    <string name="aap_notification_channel">AAP 投屏</string>
+    <string name="aap_notification_title">AAP 投屏连接中</string>
+    <string name="aap_notification_text">正在与车机建立 AAP 连接，保持前台服务运行</string>
+
+    <string name="pref_category_aap_route">投屏路线</string>
+    <string name="section_projection_route">投屏路线</string>
+    <string name="route_legacy">原版 · Android Auto</string>
+    <string name="route_aap">AAP 直连</string>
+    <string name="route_legacy_hint">依赖已安装的 Android Auto；连接车机后由 Android Auto 拉起投屏。</string>
+    <string name="route_aap_hint">不依赖 Android Auto，通过 AAP 协议直连车机（USB / 无线）。</string>
+    <string name="aap_auto_connect">自动连接</string>
+    <string name="aap_connect">连接 AAP 车机</string>
+    <string name="aap_status_disconnected">AAP：未连接</string>
+    <string name="aap_status_connected">AAP：已连接（%1$s）</string>
+    <string name="route_switched_to_aap">已切换到 AAP 直连</string>
+    <string name="route_switched_to_legacy">已切换到原版 Android Auto</string>
+    <string name="aap_connect_requested">已请求连接，正在后台握手…</string>
+    <string name="aap_stop_requested">已停止 AAP 连接</string>
+    <string name="pref_aap_route_title">投屏方式</string>
+    <string name="pref_aap_enabled_title">AAP 自动连接</string>
+    <string name="pref_aap_enabled_summary">AAP 路线下插入 USB 车机时自动建立连接</string>
+    <string name="aap_start_usb">启动 AAP 连接（USB）</string>
+    <string name="aap_start_usb_summary">连接当前已授权的 Android Auto USB accessory</string>
+    <string name="aap_start_wireless">启动 AAP 连接（无线）</string>
+    <string name="aap_start_wireless_summary">通过蓝牙发现已配对的无线车机并加入其 Wi-Fi；首次需要授予蓝牙/附近设备权限</string>
+    <string name="aap_permission_needed">请先授予所请求的权限，再点一次</string>
+    <string name="aap_start_local">启动本地调试监听</string>
+    <string name="aap_start_local_summary">仅 debug 构建：监听 localabstract 与 TCP，配合 DHU 调试</string>
+    <string name="aap_stop">停止 AAP 连接</string>
 </resources>

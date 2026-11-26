@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    AAP 车机在 USB 上以 Android Auto accessory 的身份出现。
+    只匹配这个形态，避免与其它 accessory 设备抢回调。
+-->
+<resources>
+    <usb-accessory
+        manufacturer="Google"
+        model="Android Auto"
+        version="2.0" />
+    <usb-accessory
+        manufacturer="Google"
+        model="Android Auto" />
+</resources>

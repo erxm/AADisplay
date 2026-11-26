@@ -27,7 +27,6 @@ object AaDpiHook : AaHook() {
 
     override fun loadDexClass(bridge: DexKitBridge, target: HookTarget) {
         val classes = bridge.findClass {
-            searchPackages = listOf("")
             matcher {
                 usingStrings {
                     add("DisplayParams(selectedIndex=", StringMatchType.StartsWith, false)

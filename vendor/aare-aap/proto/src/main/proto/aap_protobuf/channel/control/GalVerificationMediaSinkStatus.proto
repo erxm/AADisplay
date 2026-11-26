@@ -1,0 +1,10 @@
+syntax="proto2";
+
+import "aap_protobuf/service/media/shared/message/Config.proto";
+
+package aap_protobuf.service.control.message;
+
+message GalVerificationMediaSinkStatus {
+  optional int32 channel = 1;
+  optional media.shared.message.Config.Status status = 2;
+}

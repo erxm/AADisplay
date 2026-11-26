@@ -42,7 +42,6 @@ object AaPropsHook: AaHook() {
             )
         }
         val classes = bridge.findClass {
-            searchPackages = listOf("")
             matcher {
                 methods {
                     add(methodMatcher)
@@ -52,7 +51,7 @@ object AaPropsHook: AaHook() {
         if (classes.isEmpty() || classes.size > 1) {
             throw NoSuchMethodException("AaPropsHook: not found props class: ${classes.size}")
         }
-        val methodDatas = classes[0].getMethods().findMethod(FindMethod().matcher(methodMatcher))
+        val methodDatas = classes[0].methods.findMethod(FindMethod().matcher(methodMatcher))
         if (methodDatas.isEmpty() || methodDatas.size > 1) {
             throw NoSuchMethodException("AaPropsHook: not found props method: ${classes.size}")
         }
@@ -79,7 +78,8 @@ object AaPropsHook: AaHook() {
             return
         }
         val propKeys = props.keys.mapNotNull { it as? String }.toSet()
-        val keyValue = HashMap<String, Any?>(props.size, 1f)
+        // hook 回调可能来自不同线程（AA 的 Binder/IO 线程），普通 HashMap 会损坏。
+        val keyValue = java.util.concurrent.ConcurrentHashMap<String, Any?>(props.size, 1f)
         method.hookAfter { param ->
             val thisObject = param.thisObject
             val groupAndKey = resolveGroupAndKey(thisObject, propKeys) ?: return@hookAfter
@@ -135,7 +135,8 @@ object AaPropsHook: AaHook() {
             return
         }
         try {
-            val matrixCursor = MatrixCursor(arrayOf("key", "value"), props.size).apply {
+            // Cursor 有位置状态且非线程安全：每次 query 都新建，不能复用同一个实例。
+            fun buildCursor() = MatrixCursor(arrayOf("key", "value"), props.size).apply {
                 props.forEach { prop ->
                     addRow(arrayOf(prop.key, prop.value))
                 }
@@ -153,9 +154,9 @@ object AaPropsHook: AaHook() {
                 if (uri.authority != "com.google.android.gms.phenotype") return@hookAfter
                 if (uri.path != "/com.google.android.gms.car") return@hookAfter
                 param.result = if (param.result == null) {
-                    matrixCursor
+                    buildCursor()
                 } else {
-                    MergeCursor(arrayOf(param.result as Cursor, matrixCursor))
+                    MergeCursor(arrayOf(param.result as Cursor, buildCursor()))
                 }
             }
         } catch (e: Throwable) {

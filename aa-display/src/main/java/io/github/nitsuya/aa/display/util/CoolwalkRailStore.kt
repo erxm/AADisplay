@@ -202,7 +202,19 @@ object CoolwalkRailStore {
     fun clear(cr: ContentResolver? = null) {
         serverSnapshot = RailSnapshot()
         sessionSettled = null
-        if (cr != null) write(cr, serverSnapshot)
+        if (cr != null) {
+            // write() 内部会用 max(snapshot, persistedSession)，如果不清掉持久化 session，
+            // 上一台车机的 full HU 宽度会在下一次连接时被重新灌回来。
+            runCatching {
+                Settings.Global.putInt(cr, SETTINGS_SESSION_FULL_HU_W, 0)
+                Settings.Global.putInt(cr, SETTINGS_SESSION_TOUCH_W, 0)
+                Settings.Global.putInt(cr, SETTINGS_FULL_HU_W, 0)
+                Settings.Global.putInt(cr, SETTINGS_TOUCH_RAIL_W, 0)
+                Settings.Global.putInt(cr, SETTINGS_PHASE, RailPhase.Bootstrapping.code)
+                Settings.Global.putLong(cr, SETTINGS_UPDATED_MS, 0L)
+            }
+            write(cr, serverSnapshot)
+        }
     }
 
     fun write(cr: ContentResolver, snapshot: RailSnapshot) {
@@ -230,6 +242,10 @@ object CoolwalkRailStore {
     }
 
     fun read(cr: ContentResolver): RailSnapshot {
+        return runCatching { readUnsafe(cr) }.getOrDefault(RailSnapshot())
+    }
+
+    private fun readUnsafe(cr: ContentResolver): RailSnapshot {
         return sanitizeCrossBoot(
             RailSnapshot(
                 phase = RailPhase.fromCode(

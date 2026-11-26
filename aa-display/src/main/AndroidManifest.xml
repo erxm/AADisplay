@@ -10,6 +10,45 @@
         </intent>
     </queries>
 
+    <!--
+        ShellManagerService 会执行用户配置的 root 命令，合法调用方只有 system_server 里的
+        AaVirtualDisplayAdapter。这里不额外声明 android:permission：bindService 的调用方就是
+        system_server（uid 1000），一旦 AMS 层的组件权限判定不通过，bind 会静默失败，
+        虚拟屏就永远建不出来。真正的校验放在 IShellManager.Stub 的每个方法里
+        （Binder.getCallingUid() 必须是 SYSTEM_UID 或本进程 uid）。
+    -->
+
+    <!--
+        gearhead 进程里的启停车机服务器接收器用这个权限限制发送方（见 HeadUnitServerBridge）。
+        同样只按签名授予；本模块必须自己也申请，否则发广播时会被 AMS 拦掉。
+    -->
+    <permission
+        android:name="io.github.nitsuya.aa.display.permission.HEAD_UNIT_SERVER"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="io.github.nitsuya.aa.display.permission.HEAD_UNIT_SERVER" />
+
+    <!-- AAP 自研出口（不经过 Android Auto）：USB accessory 通道 + 长时间前台服务 -->
+    <uses-feature
+        android:name="android.hardware.usb.accessory"
+        android:required="false" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android 16+：无线 AA / 本地 TCP 的本地网络访问权限，不声明会静默丢连接（normal 级，声明即授予） -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+    <!-- 投屏期间持 SCREEN_BRIGHT_WAKE_LOCK，避免超时息屏触发 keyguard sleep token 把虚拟屏睡掉 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 无线 AAP：蓝牙发现车机 + 加入车机 Wi-Fi（App 私有 local-only 网络） -->
+    <uses-feature
+        android:name="android.hardware.bluetooth"
+        android:required="false" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
+
     <application
         android:name=".Application"
         android:allowBackup="true"
@@ -73,6 +112,8 @@
                 <category android:name="com.google.android.gms.car.category.CATEGORY_PROJECTION_OEM" />
             </intent-filter>
         </service>
+        <!-- exported 是为了让 system_server 能 bind（非 exported 的服务跨 uid 一律拒绝）；
+             调用方校验在 IShellManager.Stub 里逐方法做，见 ShellManagerService。 -->
         <service
             android:name=".service.ShellManagerService"
             android:enabled="true"
@@ -83,6 +124,28 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </service>
+
+        <!-- AAP 自研出口（GPL-3.0 的 vendor/aare-aap），不经过 gearhead -->
+        <service
+            android:name=".aap.AapEgressService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+        <!-- USB accessory 插入回调：申请授权后拉起 AAP 前台服务（无界面透明主题） -->
+        <activity
+            android:name=".aap.AapUsbAttachActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" >
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED"
+                android:resource="@xml/aap_usb_accessory_filter" />
+        </activity>
     </application>
 
 </manifest>

@@ -82,6 +82,8 @@ class DisplayRecyclerViewAdapter(
 
     fun removeItem(item: RecentTaskInfo){
         val index = items.indexOf(item)
+        // 面板隐藏/重载与 ItemTouchHelper 的 settle 动画交错时可能已经不在列表里。
+        if (index < 0 || index >= items.size) return
         this.items.removeAt(index)
         this.notifyItemRemoved(index)
     }
@@ -129,7 +131,9 @@ class DisplayRecyclerViewAdapter(
         override fun isLongPressDragEnabled(): Boolean = true
 
         override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
-            val item = items.get(viewHolder.layoutPosition)
+            val position = viewHolder.absoluteAdapterPosition
+            if (position == RecyclerView.NO_POSITION || position !in items.indices) return
+            val item = items[position]
             removeItem(item)
             if(recyclerView.id == R.id.rv_recent_task_left){
                 if (direction == ItemTouchHelper.LEFT) {

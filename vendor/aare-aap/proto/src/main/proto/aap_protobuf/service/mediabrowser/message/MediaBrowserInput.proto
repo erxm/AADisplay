@@ -1,0 +1,10 @@
+syntax="proto2";
+
+import "aap_protobuf/shared/InstrumentClusterInput.proto";
+
+package aap_protobuf.service.mediabrowser.message;
+
+message MediaBrowserInput {
+  optional shared.InstrumentClusterInput input = 1;
+  optional string path = 2;
+}

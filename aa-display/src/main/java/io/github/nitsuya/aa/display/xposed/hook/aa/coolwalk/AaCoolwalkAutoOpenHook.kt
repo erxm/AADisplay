@@ -217,14 +217,27 @@ object AaCoolwalkAutoOpenHook {
         val receiver = object : android.content.BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 if (intent?.action != AABroadcastConst.ACTION_AA_DISPLAY_SHOWN) return
+                // 动态注册的接收器必须 EXPORTED 才能跨进程收模块 App 的广播；
+                // 只接受定向到 gearhead 的广播（发送方 AaDisplayActivity 会 setPackage）。
+                // 注意不能用 API 34 的 getSentFromPackage 做强校验：实测模块 App
+                // 自己发的这条广播拿到的仍是 null，会把正常链路一起拒掉。
+                if (intent.getPackage() != InitFields.appContext.packageName) {
+                    logDebug(
+                        CoolwalkHookEnv.TAG,
+                        "AaUiHook: ignore AA_DISPLAY_SHOWN pkg=${intent.getPackage()}"
+                    )
+                    return
+                }
                 markAaDisplayShown(env, "broadcast")
             }
         }
         try {
-            ctx.registerReceiver(
+            // 三参 registerReceiver 是 API 33 才有的；ContextCompat 会在旧版本上走兼容路径。
+            androidx.core.content.ContextCompat.registerReceiver(
+                ctx,
                 receiver,
                 IntentFilter(AABroadcastConst.ACTION_AA_DISPLAY_SHOWN),
-                Context.RECEIVER_EXPORTED,
+                androidx.core.content.ContextCompat.RECEIVER_EXPORTED,
             )
             env.mAutoOpenShownReceiver = receiver
             logDebug(CoolwalkHookEnv.TAG, "AaUiHook: registered AA_DISPLAY_SHOWN receiver for AutoOpen cancel")

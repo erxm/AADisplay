@@ -1,0 +1,11 @@
+syntax="proto2";
+
+import "aap_protobuf/service/sensorsource/message/SensorType.proto";
+
+package aap_protobuf.service.sensorsource.message;
+
+message SensorRequest
+{
+    optional SensorType type = 1;
+    optional int64 min_update_period = 2;
+}

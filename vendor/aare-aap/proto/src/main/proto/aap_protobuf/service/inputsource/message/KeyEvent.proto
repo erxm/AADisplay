@@ -1,0 +1,13 @@
+syntax="proto2";
+
+package aap_protobuf.service.inputsource.message;
+
+message KeyEvent {
+  repeated Key keys = 1;
+  message Key {
+    optional uint32 keycode = 1;
+    optional bool down = 2;
+    optional uint32 metastate = 3;
+    optional bool longpress = 4;
+  }
+}

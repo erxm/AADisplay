@@ -1,0 +1,13 @@
+syntax="proto2";
+
+option optimize_for=SPEED;
+
+import "aap_protobuf/service/radio/message/Location.proto";
+
+package aap_protobuf.service.radio.message;
+
+message TrafficIncident {
+  optional int32 event_code = 1;
+  optional Location location = 2;
+  optional int32 expected_incident_duration = 3;
+}

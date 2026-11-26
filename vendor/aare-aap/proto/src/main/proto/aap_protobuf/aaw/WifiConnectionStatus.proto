@@ -1,0 +1,10 @@
+syntax="proto2";
+
+import "aap_protobuf/aaw/Status.proto";
+
+package aap_protobuf.aaw;
+
+message WifiConnectionStatus {
+  optional Status status = 1 [default = STATUS_SUCCESS];
+  optional string error_message = 2;
+}

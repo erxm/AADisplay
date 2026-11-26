@@ -71,10 +71,12 @@ object AaBtnEventHook: AaHook() {
                         if(enableDefVoiceAssist && keyCode == KeyEvent.KEYCODE_SEARCH) {
                             return@hookBefore
                         }
-                        param.abortMethod()
+                        // 先确认这个 action 确实由我们接管，再 abort。
+                        // 否则同一 receiver 类注册的其它 action 会被吞掉且不做任何处理。
                         if (needAction != eventAction || isDisposeHookReceive[eventAction] != param.thisObject) {
                             return@hookBefore
                         }
+                        param.abortMethod()
                         log(tagName, "BroadcastReceiver onReceive $clazzName, action:$eventAction, keyCode:$keyCode, keyEvent:$keyEvent")
                         val longPress = longPressStatusHookReceive.computeIfAbsent(keyCode) { AtomicBoolean(false) }
                         if (keyEvent.action != KeyEvent.ACTION_DOWN) {

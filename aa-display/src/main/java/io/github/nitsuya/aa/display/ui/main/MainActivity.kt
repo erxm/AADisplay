@@ -1,11 +1,14 @@
 package io.github.nitsuya.aa.display.ui.main
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.InputType
 import android.util.Log
 import android.view.LayoutInflater
@@ -16,6 +19,7 @@ import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.appcompat.content.res.AppCompatResources
+import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.core.view.MenuProvider
 import com.google.android.material.color.MaterialColors
@@ -26,11 +30,16 @@ import io.github.duzhaokun123.template.bases.BaseActivity
 import io.github.nitsuya.aa.display.BuildConfig
 import io.github.nitsuya.aa.display.CoreApi
 import io.github.nitsuya.aa.display.R
+import io.github.nitsuya.aa.display.aap.AapConsts
+import io.github.nitsuya.aa.display.aap.AapEgress
+import io.github.nitsuya.aa.display.aap.AapEgressService
 import io.github.nitsuya.aa.display.databinding.ActivityMainBinding
 import io.github.nitsuya.aa.display.ui.setting.SettingsActivity
 import io.github.nitsuya.aa.display.util.AADisplayConfig
 import io.github.nitsuya.aa.display.util.SharedPreferencesAccess
 import io.github.nitsuya.template.bases.getAttr
+import io.github.nitsuya.template.bases.runIO
+import io.github.nitsuya.template.bases.runMain
 
 class MainActivity :
     BaseActivity<ActivityMainBinding>(
@@ -42,6 +51,13 @@ class MainActivity :
     companion object {
         const val TAG = "AADisplay_MainActivity"
         private const val AA_PACKAGE = "com.google.android.projection.gearhead"
+        private const val REQ_WIRELESS = 42
+        // 只请求无线连接真正必需的权限：蓝牙连接 + 附近 Wi-Fi。
+        // BLUETOOTH_SCAN / 定位只是“发现/读 SSID”的优化项，缺少也能连接，避免一次弹四个框。
+        private val WIRELESS_PERMISSIONS = listOf(
+            Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.NEARBY_WIFI_DEVICES,
+        )
     }
 
     private data class LauncherOption(
@@ -74,6 +90,18 @@ class MainActivity :
     private var savedDelayDestroyTime: Int = 180
     private var savedAutoOpen: Boolean = false
 
+    /** 程序化设置单选/开关时不要回写配置或触发连接。 */
+    private var suppressRouteCallbacks = false
+
+    /** AAP 连接状态每秒刷新一次（服务在同进程，可直接读 AapEgress）。 */
+    private val routeHandler = Handler(Looper.getMainLooper())
+    private val routeStatusTick = object : Runnable {
+        override fun run() {
+            refreshAapStatus()
+            routeHandler.postDelayed(this, 1_000L)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         ActivityMainBinding.inflate(LayoutInflater.from(this))
         super.onCreate(savedInstanceState)
@@ -84,6 +112,7 @@ class MainActivity :
     override fun initViews() {
         super.initViews()
         setupSettingControls()
+        setupRouteControls()
     }
 
     @SuppressLint("SetTextI18n")
@@ -136,15 +165,34 @@ class MainActivity :
         } else {
             baseBinding.systemVersion.text = "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
         }
-        baseBinding.rootPrivilege.setText(
-            if (Shell.getShell().isRoot) R.string.info_yes else R.string.info_no
-        )
+        // Shell.getShell() 会阻塞到 su 授权完成，放到 IO 线程，避免启动/返回时卡主线程。
+        baseBinding.rootPrivilege.setText(R.string.info_no)
+        runIO {
+            val isRoot = runCatching { Shell.getShell().isRoot }.getOrDefault(false)
+            runMain {
+                if (!isFinishing && !isDestroyed) {
+                    baseBinding.rootPrivilege.setText(
+                        if (isRoot) R.string.info_yes else R.string.info_no
+                    )
+                }
+            }
+        }
+        warmShellLaunchers()
         refreshSettingControls()
+        refreshRouteCard()
     }
 
     override fun onResume() {
         super.onResume()
         refreshSettingControls()
+        refreshRouteCard()
+        routeHandler.removeCallbacks(routeStatusTick)
+        routeHandler.post(routeStatusTick)
+    }
+
+    override fun onPause() {
+        routeHandler.removeCallbacks(routeStatusTick)
+        super.onPause()
     }
 
     /**
@@ -250,6 +298,126 @@ class MainActivity :
 
         baseBinding.btnSave.setOnClickListener {
             persistSettings()
+        }
+    }
+
+    // ------------------------------------------------------------ 投屏路线 / AAP
+
+    private fun setupRouteControls() {
+        baseBinding.toggleRoute.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (!isChecked || suppressRouteCallbacks) return@addOnButtonCheckedListener
+            val route = if (checkedId == R.id.btn_route_aap) {
+                AapConsts.ROUTE_AAP
+            } else {
+                AapConsts.ROUTE_LEGACY
+            }
+            applyRouteSelection(route, fromUser = true)
+        }
+
+        baseBinding.switchAapAuto.setOnCheckedChangeListener { _, checked ->
+            if (suppressRouteCallbacks) return@setOnCheckedChangeListener
+            appConfig.edit().putBoolean(AADisplayConfig.AapEnabled.key, checked).commit()
+            SharedPreferencesAccess.makeReadableForHooks(this, AADisplayConfig.ConfigName)
+            if (checked && AapEgressService.route(this) == AapConsts.ROUTE_AAP) {
+                ensureWirelessPermissions()
+                AapEgressService.start(this)
+            } else if (!checked) {
+                AapEgressService.stop(this)
+            }
+            refreshAapStatus()
+        }
+
+        baseBinding.btnAapConnect.setOnClickListener {
+            // 无线 AAP 需要蓝牙/附近设备权限；缺什么就请求什么，USB 不受影响。
+            ensureWirelessPermissions()
+            AapEgressService.start(this)
+            Toast.makeText(this, R.string.aap_connect_requested, Toast.LENGTH_SHORT).show()
+            refreshAapStatus()
+        }
+
+        baseBinding.btnAapStop.setOnClickListener {
+            AapEgressService.stop(this)
+            Toast.makeText(this, R.string.aap_stop_requested, Toast.LENGTH_SHORT).show()
+            refreshAapStatus()
+        }
+    }
+
+    private fun refreshRouteCard() {
+        val aap = AADisplayConfig.AapRoute.get(appConfig) == AapConsts.ROUTE_AAP
+        suppressRouteCallbacks = true
+        baseBinding.toggleRoute.check(if (aap) R.id.btn_route_aap else R.id.btn_route_legacy)
+        baseBinding.switchAapAuto.isChecked = AADisplayConfig.AapEnabled.get(appConfig)
+        suppressRouteCallbacks = false
+        baseBinding.llAapControls.visibility = if (aap) View.VISIBLE else View.GONE
+        baseBinding.tvRouteHint.setText(if (aap) R.string.route_aap_hint else R.string.route_legacy_hint)
+        refreshAapStatus()
+    }
+
+    /** 路线切换立即落盘；切到 AAP 时按“自动连接”决定是否马上发起一次连接。 */
+    private fun applyRouteSelection(route: String, fromUser: Boolean) {
+        val aap = route == AapConsts.ROUTE_AAP
+        if (fromUser) {
+            appConfig.edit()
+                .putString(AADisplayConfig.AapRoute.key, route)
+                .commit()
+            SharedPreferencesAccess.makeReadableForHooks(this, AADisplayConfig.ConfigName)
+            if (!aap) {
+                // 两条路线不要同时占用车机：切回原版时结束 AAP 会话。
+                AapEgressService.stop(this)
+            }
+            Toast.makeText(
+                this,
+                if (aap) R.string.route_switched_to_aap else R.string.route_switched_to_legacy,
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+        suppressRouteCallbacks = true
+        baseBinding.toggleRoute.check(if (aap) R.id.btn_route_aap else R.id.btn_route_legacy)
+        suppressRouteCallbacks = false
+        baseBinding.llAapControls.visibility = if (aap) View.VISIBLE else View.GONE
+        baseBinding.tvRouteHint.setText(if (aap) R.string.route_aap_hint else R.string.route_legacy_hint)
+        refreshAapStatus()
+        if (fromUser && aap && AADisplayConfig.AapEnabled.get(appConfig)) {
+            ensureWirelessPermissions()
+            AapEgressService.start(this)
+        }
+    }
+
+    private fun refreshAapStatus() {
+        val running = AapEgress.isRunning
+        baseBinding.tvAapStatus.text = if (running) {
+            getString(R.string.aap_status_connected, AapEgress.transportName ?: "AAP")
+        } else {
+            getString(R.string.aap_status_disconnected)
+        }
+        baseBinding.btnAapConnect.isEnabled = !running
+        baseBinding.btnAapStop.isEnabled = running
+    }
+
+    private fun ensureWirelessPermissions() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        val missing = WIRELESS_PERMISSIONS.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) {
+            requestPermissions(missing.toTypedArray(), REQ_WIRELESS)
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_WIRELESS) {
+            // 授权完成后，如果仍在 AAP 路线且开着自动连接，补发一次连接请求。
+            if (AapEgressService.route(this) == AapConsts.ROUTE_AAP &&
+                AADisplayConfig.AapEnabled.get(appConfig)
+            ) {
+                AapEgressService.start(this)
+            }
+            refreshAapStatus()
         }
     }
 
@@ -397,7 +565,29 @@ class MainActivity :
         return true
     }
 
-    private fun queryLauncherPackagesViaShell(): List<String> {
+    /** root shell 查询结果缓存：查询本身会阻塞等 su，不能放在主线程。 */
+    @Volatile
+    private var cachedShellLaunchers: List<String>? = null
+    @Volatile
+    private var shellLauncherWarmInFlight = false
+
+    private fun queryLauncherPackagesViaShell(): List<String> = cachedShellLaunchers ?: emptyList()
+
+    private fun warmShellLaunchers() {
+        if (cachedShellLaunchers != null || shellLauncherWarmInFlight) return
+        shellLauncherWarmInFlight = true
+        runIO {
+            val list = queryLauncherPackagesViaShellBlocking()
+            cachedShellLaunchers = list
+            shellLauncherWarmInFlight = false
+            runMain {
+                // 结果回来后重建一次下拉框；期间用户可能已经离开页面。
+                if (!isFinishing && !isDestroyed) refreshSettingControls()
+            }
+        }
+    }
+
+    private fun queryLauncherPackagesViaShellBlocking(): List<String> {
         if (!Shell.getShell().isRoot) return emptyList()
 
         val output = runCatching {

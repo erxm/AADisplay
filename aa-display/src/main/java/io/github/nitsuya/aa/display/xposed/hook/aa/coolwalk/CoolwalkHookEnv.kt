@@ -134,18 +134,7 @@ class CoolwalkHookEnv {
     fun resolveLayoutInfoConstructors(className: String): List<Constructor<*>> {
         val clazz = loadClass(className)
         val matched = clazz.declaredConstructors.filter { ctor ->
-            val p = ctor.parameterTypes
-            p.size >= 10 &&
-                p[0] == Int::class.javaPrimitiveType &&
-                p[1] == Int::class.javaPrimitiveType &&
-                p[2] == Int::class.javaPrimitiveType &&
-                p[4] == Boolean::class.javaPrimitiveType &&
-                p[5] == Boolean::class.javaPrimitiveType &&
-                p[7] == Boolean::class.javaPrimitiveType &&
-                p[8] == Boolean::class.javaPrimitiveType &&
-                p[9] == Boolean::class.javaPrimitiveType &&
-                !p[6].isPrimitive &&
-                (p[3] == Int::class.javaPrimitiveType || p[3].isEnum)
+            isLayoutInfoConstructor(ctor.parameterTypes)
         }
         if (matched.isEmpty()) {
             throw NoSuchMethodException("AaUiHook: not found compatible LayoutInfo constructor for $className")
@@ -166,7 +155,8 @@ class CoolwalkHookEnv {
         val clazz = try {
             loadClass("com.google.android.projection.gearhead.service.CarSystemUiControllerService")
         } catch (e: Throwable) {
-            log(TAG, "AaUiHook: CarSystemUiControllerService missing", e)
+            // AA 17.8+ 删掉了这个类，属于预期路径，不要打完整 ClassNotFoundException 堆栈。
+            logDebug(TAG, "AaUiHook: CarSystemUiControllerService missing (expected on AA 17.8+)")
             return null
         }
         try {
@@ -268,6 +258,36 @@ class CoolwalkHookEnv {
 
     companion object {
         const val TAG = "AAD_AaUiHook"
+
+        /**
+         * LayoutInfo 构造器形状（AA 16.x → 18.1）：
+         * - 17.8：`(IIII ZZ <layoutTypeObj> ZZZ)`
+         * - 18.1：`(IIII ZZZ <layoutTypeObj> ZZZ)` —— 对象参数前多了一个 boolean
+         *
+         * 因此不能写死“对象在 index 6”。只要求 0..2 是 int、3 是 int/enum、4/5 是 boolean，
+         * 6..9 中恰好一个非 primitive（布局类型对象），其余都是 boolean。
+         */
+        fun isLayoutInfoConstructor(p: Array<Class<*>>): Boolean {
+            if (p.size < 10) return false
+            if (p[0] != Int::class.javaPrimitiveType) return false
+            if (p[1] != Int::class.javaPrimitiveType) return false
+            if (p[2] != Int::class.javaPrimitiveType) return false
+            if (p[3] != Int::class.javaPrimitiveType && !p[3].isEnum) return false
+            if (p[4] != Boolean::class.javaPrimitiveType) return false
+            if (p[5] != Boolean::class.javaPrimitiveType) return false
+            var objectIndex = -1
+            for (i in 6..9) {
+                if (!p[i].isPrimitive) {
+                    if (objectIndex >= 0) return false
+                    objectIndex = i
+                }
+            }
+            if (objectIndex < 0) return false
+            for (i in 6..9) {
+                if (i != objectIndex && p[i] != Boolean::class.javaPrimitiveType) return false
+            }
+            return true
+        }
 
         /**
          * DexKit needle：AA 17.8 里 ProjectionContext 启动器的字符串常量。

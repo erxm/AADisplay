@@ -27,6 +27,8 @@ public class GenericMotionView extends View {
 
     @Override
     public boolean onGenericMotionEvent(MotionEvent event) {
+        // 没设置消费者时不能 NPE，也不能把事件全吃掉（否则下层收不到滚轮/鼠标）。
+        if (onGenericMotionEvent == null) return false;
         onGenericMotionEvent.accept(event);
         return true;
     }

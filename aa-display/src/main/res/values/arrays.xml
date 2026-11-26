@@ -21,4 +21,13 @@
         <item>2</item>
     </string-array>
 
+    <string-array name="aap_route_keys">
+        <item>原版路线（依赖 Android Auto）</item>
+        <item>AAP 直连（不依赖 Android Auto）</item>
+    </string-array>
+    <string-array name="aap_route_values">
+        <item>legacy</item>
+        <item>aap</item>
+    </string-array>
+
 </resources>
