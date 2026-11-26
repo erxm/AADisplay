@@ -428,8 +428,15 @@ class AapEgressService : Service() {
             )
             manager.createNotificationChannel(channel)
         }
+        // 点通知回到主界面时必须复用已有任务栈：否则每次点击都会压入一个新的
+        // MainActivity，按 Back 只会逐个退回主界面，看起来像“回不到桌面”。
         val pending = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java),
+            this, 0,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val notification: Notification = Notification.Builder(this, CHANNEL_ID)

@@ -1,5 +1,12 @@
 # Changelog
 
+## 未发布
+
+### Fixed
+- 主界面按 Back 无法回到桌面：AAP 通知的 PendingIntent 每次点击都会往任务栈里
+  再压入一个 `MainActivity`，Back 只是逐个退回相同界面。`MainActivity` 改为
+  `singleTask`，通知 Intent 补 `NEW_TASK | CLEAR_TOP | SINGLE_TOP`。
+
 ## v0.24#18.1-e4 (2026-11-26)
 
 基线：`89d03f2`（tag `v0.24#17.8-e3`）。发布说明见 [docs/releases/v0.24-18.1-e4.md](docs/releases/v0.24-18.1-e4.md)。
