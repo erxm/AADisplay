@@ -51,8 +51,7 @@ AAP 路线的思路与无线实现主要来自 [lagXkjy/AADisplay](https://githu
 
 ### 第三方代码与许可
 
-本分支引用的全部第三方代码、版本提交与改动清单见 **[NOTICE-AAP.md](NOTICE-AAP.md)**，
-外部项目提交的归档分支见 [vendor/README.md](vendor/README.md)，主要包括：
+本分支引用的全部第三方代码、版本提交与改动清单见 **[NOTICE-AAP.md](NOTICE-AAP.md)**，主要包括：
 
 - [lagXkjy/AADisplay](https://github.com/lagXkjy/AADisplay) @ `1886f69`：AAP 直连思路与无线连接实现
   （蓝牙 ACL → WPP → 车机热点 → TCP AAP）的主要来源，本项目受其启发并做裁剪；

@@ -13,9 +13,6 @@
 除下文列出的来源外，其余代码均为本项目自有实现。整个仓库按根目录 [LICENSE](LICENSE)
 （GPL-3.0）分发。
 
-仓库内用于归档外部项目提交的 `vendor/*-import` 分支与固定提交见
-[vendor/README.md](vendor/README.md)。
-
 ---
 
 ## 1. 主要参考来源：lagXkjy/AADisplay
